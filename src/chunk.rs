@@ -1,10 +1,16 @@
-use std::{ptr};
+use std::ptr;
 
-use crate::value::{Value, ValueArray, free_value_array, init_value_array, write_value_array};
+use crate::value::{free_value_array, init_value_array, write_value_array, Value, ValueArray};
 
-pub type OpCode = u8;
-pub const OP_CONSTANT: OpCode = 1;
-pub const OP_RETURN: OpCode = 2;
+pub enum OpCode {
+    Constant,
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Negate,
+    Return,
+}
 
 pub struct Chunk {
     pub count: i32,
