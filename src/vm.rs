@@ -1,6 +1,11 @@
-use std::{ptr};
+use std::ptr;
 
-use crate::{chunk::{Chunk, OpCode}, debug::disassemble_instruction, value::{print_value, Value}};
+use crate::{
+    chunk::{Chunk, OpCode},
+    compiler::compile,
+    debug::disassemble_instruction,
+    value::{print_value, Value},
+};
 
 pub const STACK_MAX: usize = 256;
 
@@ -11,9 +16,10 @@ pub struct VM {
     pub stack_top: *mut Value,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InterpretResult {
     Ok,
-    _CompileError,
+    CompileError,
     RuntimeError,
 }
 
@@ -35,10 +41,12 @@ pub unsafe fn init_vm() {
 
 pub unsafe fn free_vm() {}
 
-pub unsafe fn interpret(chunk: *mut Chunk) -> InterpretResult {
-    vm.chunk = chunk;
-    vm.ip = (*vm.chunk).code;
-    run()
+pub unsafe fn interpret(source: &str) -> InterpretResult {
+    // vm.chunk = chunk;
+    // vm.ip = (*vm.chunk).code;
+    // run()
+    compile(source);
+    InterpretResult::Ok
 }
 
 pub unsafe fn push(value: Value) {

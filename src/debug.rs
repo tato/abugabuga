@@ -1,6 +1,9 @@
 use std::usize;
 
-use crate::{chunk::{Chunk, OpCode}, value::print_value};
+use crate::{
+    chunk::{Chunk, OpCode},
+    value::print_value,
+};
 
 pub unsafe fn disassemble_chunk(chunk: *mut Chunk, name: &str) {
     println!("== {} ==", name);
