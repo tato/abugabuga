@@ -1,16 +1,14 @@
 use core::slice;
-use std::{
-    mem,
-    ops::{Add, Sub},
-    ptr,
-};
+use std::ptr;
 
 pub struct Scanner {
     pub start: *const u8,
     pub current: *const u8,
+    pub end: *const u8,
     pub line: i32,
 }
 
+#[derive(Clone, Copy)]
 pub struct Token {
     pub ty: TokenType,
     pub start: *const u8,
@@ -74,12 +72,14 @@ pub enum TokenType {
 pub static mut scanner: Scanner = Scanner {
     start: ptr::null_mut(),
     current: ptr::null_mut(),
+    end: ptr::null_mut(),
     line: 0,
 };
 
 pub unsafe fn init_scanner(source: &str) {
     scanner.start = source.as_ptr();
     scanner.current = source.as_ptr();
+    scanner.end = source.as_ptr().add(source.len());
     scanner.line = 1;
 }
 
@@ -158,7 +158,7 @@ pub unsafe fn scan_token() -> Token {
 }
 
 unsafe fn is_at_end() -> bool {
-    return *scanner.current == 0;
+    return scanner.current == scanner.end;
 }
 
 unsafe fn advance() -> u8 {

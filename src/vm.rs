@@ -1,7 +1,7 @@
-use std::ptr;
+use std::{mem, ptr};
 
 use crate::{
-    chunk::{Chunk, OpCode},
+    chunk::{free_chunk, init_chunk, Chunk, OpCode},
     compiler::compile,
     debug::disassemble_instruction,
     value::{print_value, Value},
@@ -42,11 +42,21 @@ pub unsafe fn init_vm() {
 pub unsafe fn free_vm() {}
 
 pub unsafe fn interpret(source: &str) -> InterpretResult {
-    // vm.chunk = chunk;
-    // vm.ip = (*vm.chunk).code;
-    // run()
-    compile(source);
-    InterpretResult::Ok
+    let mut chunk = mem::zeroed();
+    init_chunk(&mut chunk);
+
+    if !compile(source, &mut chunk) {
+        free_chunk(&mut chunk);
+        return InterpretResult::CompileError;
+    }
+
+    vm.chunk = &mut chunk;
+    vm.ip = (*vm.chunk).code;
+
+    let result = run();
+
+    free_chunk(&mut chunk);
+    result
 }
 
 pub unsafe fn push(value: Value) {
