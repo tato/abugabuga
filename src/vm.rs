@@ -1,11 +1,6 @@
 use std::{mem, ptr};
 
-use crate::{
-    chunk::{free_chunk, init_chunk, Chunk, OpCode},
-    compiler::compile,
-    debug::disassemble_instruction,
-    value::{print_value, Value},
-};
+use crate::{chunk::{free_chunk, init_chunk, Chunk, OpCode}, compiler::compile, debug::disassemble_instruction, value::{Value, as_bool, as_number, bool_val, is_bool, is_nil, is_number, nil_val, number_val, print_value, values_equal}};
 
 pub const STACK_MAX: usize = 256;
 
@@ -27,12 +22,21 @@ pub enum InterpretResult {
 pub static mut vm: VM = VM {
     chunk: ptr::null_mut(),
     ip: ptr::null_mut(),
-    stack: [0.0; STACK_MAX],
+    stack: [nil_val(); STACK_MAX],
     stack_top: ptr::null_mut(),
 };
 
 unsafe fn reset_stack() {
     vm.stack_top = vm.stack.as_mut_ptr();
+}
+
+macro_rules! runtime_error {
+    ($args:tt) => {
+        eprintln!($args);
+        let instruction = vm.ip.sub((*vm.chunk).code.sub(1) as usize);
+        let line = *(*vm.chunk).lines.offset(instruction as isize);
+        eprintln!("[line {}] in script", line);
+    };
 }
 
 pub unsafe fn init_vm() {
@@ -69,6 +73,14 @@ pub unsafe fn pop() -> Value {
     *vm.stack_top
 }
 
+unsafe fn peek(distance: isize) -> Value {
+    *vm.stack_top.offset(-1 - distance)
+}
+
+unsafe fn is_falsey(value: Value) -> bool {
+    is_nil(value) || (is_bool(value) && !as_bool(value))
+}
+
 unsafe fn run() -> InterpretResult {
     macro_rules! read_byte {
         () => {{
@@ -83,10 +95,14 @@ unsafe fn run() -> InterpretResult {
         };
     }
     macro_rules! binary_op {
-        ($op:tt) => {{
-            let b = pop();
-            let a = pop();
-            push(a $op b);
+        ($value_type:ident, $op:tt) => {{
+            if !is_number(peek(0)) || !is_number(peek(1)) {
+                runtime_error!("Operands must be numbers.");
+                return InterpretResult::RuntimeError;
+            }
+            let b = as_number(pop());
+            let a = as_number(pop());
+            push($value_type(a $op b));
         }}
     }
 
@@ -111,11 +127,28 @@ unsafe fn run() -> InterpretResult {
                 let constant = read_constant!();
                 push(constant);
             }
-            i if i == OpCode::Negate as u8 => push(-pop()),
-            i if i == OpCode::Add as u8 => binary_op!(+),
-            i if i == OpCode::Subtract as u8 => binary_op!(-),
-            i if i == OpCode::Multiply as u8 => binary_op!(*),
-            i if i == OpCode::Divide as u8 => binary_op!(/),
+            i if i == OpCode::Nil as u8 => push(nil_val()),
+            i if i == OpCode::True as u8 => push(bool_val(true)),
+            i if i == OpCode::False as u8 => push(bool_val(false)),
+            i if i == OpCode::Equal as u8 => {
+                let b = pop();
+                let a  = pop();
+                push(bool_val(values_equal(a, b)));
+            }
+            i if i == OpCode::Greater as u8 => binary_op!(bool_val, >),
+            i if i == OpCode::Less as u8 => binary_op!(bool_val, <),
+            i if i == OpCode::Not as u8 => push(bool_val(is_falsey(pop()))),
+            i if i == OpCode::Negate as u8 => {
+                if !is_number(peek(0)) {
+                    runtime_error!("Operand must be a number.");
+                    return InterpretResult::RuntimeError;
+                }
+                push(number_val(-as_number(pop())));
+            },
+            i if i == OpCode::Add as u8 => binary_op!(number_val, +),
+            i if i == OpCode::Subtract as u8 => binary_op!(number_val, -),
+            i if i == OpCode::Multiply as u8 => binary_op!(number_val, *),
+            i if i == OpCode::Divide as u8 => binary_op!(number_val, /),
             i if i == OpCode::Return as u8 => {
                 print_value(pop());
                 println!("");

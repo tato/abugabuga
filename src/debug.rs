@@ -30,10 +30,17 @@ pub unsafe fn disassemble_instruction(chunk: *mut Chunk, offset: i32) -> i32 {
     let instruction = *chunk.code.offset(offset as isize);
     match instruction {
         i if i == OpCode::Constant as u8 => constant_instruction("OP_CONSTANT", chunk, offset),
+        i if i == OpCode::Nil as u8 => simple_instruction("OP_NIL", offset),
+        i if i == OpCode::True as u8 => simple_instruction("OP_TRUE", offset),
+        i if i == OpCode::False as u8 => simple_instruction("OP_FALSE", offset),
+        i if i == OpCode::Equal as u8 => simple_instruction("OP_EQUAL", offset),
+        i if i == OpCode::Greater as u8 => simple_instruction("OP_GREATER", offset),
+        i if i == OpCode::Less as u8 => simple_instruction("OP_LESS", offset),
         i if i == OpCode::Add as u8 => simple_instruction("OP_ADD", offset),
         i if i == OpCode::Subtract as u8 => simple_instruction("OP_SUBTRACT", offset),
         i if i == OpCode::Multiply as u8 => simple_instruction("OP_MULTIPLY", offset),
         i if i == OpCode::Divide as u8 => simple_instruction("OP_DIVIDE", offset),
+        i if i == OpCode::Not as u8 => simple_instruction("OP_NOT", offset),
         i if i == OpCode::Negate as u8 => simple_instruction("OP_NEGATE", offset),
         i if i == OpCode::Return as u8 => simple_instruction("OP_RETURN", offset),
         _ => {

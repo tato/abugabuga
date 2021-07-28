@@ -4,10 +4,17 @@ use crate::value::{free_value_array, init_value_array, write_value_array, Value,
 
 pub enum OpCode {
     Constant,
+    Nil,
+    True,
+    False,
+    Equal,
+    Greater,
+    Less,
     Add,
     Subtract,
     Multiply,
     Divide,
+    Not,
     Negate,
     Return,
 }

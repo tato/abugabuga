@@ -1,5 +1,4 @@
-use core::slice;
-use std::ptr;
+use std::{ptr, slice, str};
 
 pub struct Scanner {
     pub start: *const u8,
@@ -8,7 +7,7 @@ pub struct Scanner {
     pub line: i32,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct Token {
     pub ty: TokenType,
     pub start: *const u8,
@@ -232,7 +231,7 @@ unsafe fn skip_whitespace() {
 }
 
 unsafe fn check_keyword(start: i32, length: i32, rest: &'static str, ty: TokenType) -> TokenType {
-    if scanner.current.sub(scanner.start as usize) == scanner.start.add(length as usize)
+    if scanner.current.sub(scanner.start as usize) as usize == (start + length) as usize
         && rest.as_bytes()
             == slice::from_raw_parts(scanner.start.add(start as usize), length as usize)
     {

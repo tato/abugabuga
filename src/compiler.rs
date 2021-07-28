@@ -1,11 +1,6 @@
 use std::{mem, ptr, slice, str, u8};
 
-use crate::{
-    chunk::{add_constant, write_chunk, Chunk, OpCode},
-    debug::disassemble_chunk,
-    scanner::{init_scanner, scan_token, Token, TokenType},
-    value::Value,
-};
+use crate::{chunk::{add_constant, write_chunk, Chunk, OpCode}, debug::disassemble_chunk, scanner::{init_scanner, scan_token, Token, TokenType}, value::{Value, number_val}};
 
 pub struct Parser {
     pub current: Token,
@@ -173,10 +168,25 @@ unsafe fn binary() {
     parse_precedence(mem::transmute((*rule).precedence as u8 + 1));
 
     match operator_type {
+        TokenType::BangEqual => emit_bytes(OpCode::Equal as u8, OpCode::Not as u8),
+        TokenType::EqualEqual => emit_byte(OpCode::Equal as u8),
+        TokenType::Greater => emit_byte(OpCode::Greater as u8),
+        TokenType::GreaterEqual => emit_bytes(OpCode::Less as u8, OpCode::Not as u8),
+        TokenType::Less => emit_byte(OpCode::Less as u8),
+        TokenType::LessEqual => emit_bytes(OpCode::Greater as u8, OpCode::Not as u8),
         TokenType::Plus => emit_byte(OpCode::Add as u8),
         TokenType::Minus => emit_byte(OpCode::Subtract as u8),
         TokenType::Star => emit_byte(OpCode::Multiply as u8),
         TokenType::Slash => emit_byte(OpCode::Divide as u8),
+        _ => return, // unreachable
+    }
+}
+
+unsafe fn literal() {
+    match parser.previous.ty {
+        TokenType::False => emit_byte(OpCode::False as u8),
+        TokenType::Nil => emit_byte(OpCode::Nil as u8),
+        TokenType::True => emit_byte(OpCode::True as u8),
         _ => return, // unreachable
     }
 }
@@ -193,7 +203,7 @@ unsafe fn number() {
     ))
     .parse()
     .unwrap();
-    emit_constant(value);
+    emit_constant(number_val(value as f64));
 }
 
 unsafe fn unary() {
@@ -202,6 +212,7 @@ unsafe fn unary() {
     parse_precedence(Precedence::Unary);
 
     match ty {
+        TokenType::Bang => emit_byte(OpCode::Not as u8),
         TokenType::Minus => emit_byte(OpCode::Negate as u8),
         _ => return, // unreachable
     }
@@ -234,31 +245,31 @@ static rules: [ParseRule; 40] = unsafe {
     set_data!(Semicolon, None, None, None);
     set_data!(Slash, None, Some(binary), Factor);
     set_data!(Star, None, Some(binary), Factor);
-    set_data!(Bang, None, None, None);
-    set_data!(BangEqual, None, None, None);
+    set_data!(Bang, Some(unary), None, None);
+    set_data!(BangEqual, None, Some(binary), Equality);
     set_data!(Equal, None, None, None);
-    set_data!(EqualEqual, None, None, None);
-    set_data!(Greater, None, None, None);
-    set_data!(GreaterEqual, None, None, None);
-    set_data!(Less, None, None, None);
-    set_data!(LessEqual, None, None, None);
+    set_data!(EqualEqual, None, Some(binary), Equality);
+    set_data!(Greater, None, Some(binary), Comparison);
+    set_data!(GreaterEqual, None, Some(binary), Comparison);
+    set_data!(Less, None, Some(binary), Comparison);
+    set_data!(LessEqual, None, Some(binary), Comparison);
     set_data!(Identifier, None, None, None);
     set_data!(String, None, None, None);
     set_data!(Number, Some(number), None, None);
     set_data!(And, None, None, None);
     set_data!(Class, None, None, None);
     set_data!(Else, None, None, None);
-    set_data!(False, None, None, None);
+    set_data!(False, Some(literal), None, None);
     set_data!(For, None, None, None);
     set_data!(Fun, None, None, None);
     set_data!(If, None, None, None);
-    set_data!(Nil, None, None, None);
+    set_data!(Nil, Some(literal), None, None);
     set_data!(Or, None, None, None);
     set_data!(Print, None, None, None);
     set_data!(Return, None, None, None);
     set_data!(Super, None, None, None);
     set_data!(This, None, None, None);
-    set_data!(True, None, None, None);
+    set_data!(True, Some(literal), None, None);
     set_data!(Var, None, None, None);
     set_data!(While, None, None, None);
     set_data!(Error, None, None, None);
