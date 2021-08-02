@@ -1,5 +1,27 @@
 use std::{ffi::c_void, ptr};
 
+use crate::{object::{Obj, ObjString, ObjType}, vm::vm};
+
+macro_rules! allocate {
+    ($t:ty, $count:expr) => {
+        crate::memory::reallocate(
+            std::ptr::null_mut(),
+            0,
+            std::mem::size_of::<$t>() * $count as usize,
+        ) as *mut $t
+    };
+}
+
+macro_rules! free {
+    ($t:ty, $pointer:expr) => {
+        crate::memory::reallocate(
+            $pointer as *mut std::ffi::c_void,
+            std::mem::size_of::<$t>(),
+            0
+        )
+    };
+}
+
 macro_rules! grow_capacity {
     ($capacity:expr) => {
         if $capacity < 8 {
@@ -42,4 +64,23 @@ pub unsafe fn reallocate(pointer: *mut c_void, old_size: usize, new_size: usize)
     }
 
     result as *mut c_void
+}
+
+unsafe fn free_object(object: *mut Obj) {
+    match (*object).ty {
+        ObjType::String => {
+            let string = object as *mut ObjString;
+            free_array!(u8, (*string).chars, (*string).length + 1);
+            free!(ObjString, object);
+        }
+    }
+}
+
+pub unsafe fn free_objects() {
+    let mut object = vm.objects;
+    while object != ptr::null_mut() {
+        let next = (*object).next;
+        free_object(object);
+        object = next;
+    }
 }

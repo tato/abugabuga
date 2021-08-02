@@ -1,6 +1,6 @@
 use std::{mem, ptr};
 
-use crate::{chunk::{free_chunk, init_chunk, Chunk, OpCode}, compiler::compile, debug::disassemble_instruction, value::{Value, as_bool, as_number, bool_val, is_bool, is_nil, is_number, nil_val, number_val, print_value, values_equal}};
+use crate::{chunk::{free_chunk, init_chunk, Chunk, OpCode}, compiler::compile, debug::disassemble_instruction, memory::free_objects, object::{Obj, as_string, is_string, take_string}, value::{Value, as_bool, as_number, bool_val, is_bool, is_nil, is_number, nil_val, number_val, obj_val, print_value, values_equal}};
 
 pub const STACK_MAX: usize = 256;
 
@@ -9,6 +9,7 @@ pub struct VM {
     pub ip: *mut u8,
     pub stack: [Value; STACK_MAX],
     pub stack_top: *mut Value,
+    pub objects: *mut Obj,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,6 +25,7 @@ pub static mut vm: VM = VM {
     ip: ptr::null_mut(),
     stack: [nil_val(); STACK_MAX],
     stack_top: ptr::null_mut(),
+    objects: ptr::null_mut(),
 };
 
 unsafe fn reset_stack() {
@@ -43,7 +45,9 @@ pub unsafe fn init_vm() {
     reset_stack();
 }
 
-pub unsafe fn free_vm() {}
+pub unsafe fn free_vm() {
+    free_objects();
+}
 
 pub unsafe fn interpret(source: &str) -> InterpretResult {
     let mut chunk = mem::zeroed();
@@ -79,6 +83,20 @@ unsafe fn peek(distance: isize) -> Value {
 
 unsafe fn is_falsey(value: Value) -> bool {
     is_nil(value) || (is_bool(value) && !as_bool(value))
+}
+
+unsafe fn concatenate() {
+    let b = &*as_string(pop());
+    let a = &*as_string(pop());
+
+    let length = a.length + b.length;
+    let chars = allocate!(u8, length + 1);
+    ptr::copy_nonoverlapping(a.chars, chars, a.length as usize);
+    ptr::copy_nonoverlapping(b.chars, chars.offset(a.length as isize), b.length as usize);
+    *chars.offset(length as isize) = 0;
+
+    let result = take_string(chars, length);
+    push(obj_val(mem::transmute(result)));
 }
 
 unsafe fn run() -> InterpretResult {
@@ -145,7 +163,18 @@ unsafe fn run() -> InterpretResult {
                 }
                 push(number_val(-as_number(pop())));
             },
-            i if i == OpCode::Add as u8 => binary_op!(number_val, +),
+            i if i == OpCode::Add as u8 => {
+                if is_string(peek(0)) && is_string(peek(1)) {
+                    concatenate();
+                } else if is_number(peek(0)) && is_number(peek(1)) {
+                    let b = as_number(pop());
+                    let a = as_number(pop());
+                    push(number_val(a + b));
+                } else {
+                    runtime_error!("Operands must be two numbers or two strings.");
+                    return InterpretResult::RuntimeError;
+                }
+            },
             i if i == OpCode::Subtract as u8 => binary_op!(number_val, -),
             i if i == OpCode::Multiply as u8 => binary_op!(number_val, *),
             i if i == OpCode::Divide as u8 => binary_op!(number_val, /),

@@ -1,17 +1,21 @@
 use std::ptr;
 
+use crate::object::{Obj, as_string, print_object};
+
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ValueType {
     Bool,
     Nil,
     Number,
+    Obj,
 }
 
 #[derive(Clone, Copy)]
 pub union ValueValue {
     boolean: bool,
     number: f64,
+    obj: *mut Obj,
 }
 
 #[derive(Clone, Copy)]
@@ -32,12 +36,20 @@ pub fn is_number(value: Value) -> bool {
     value.ty == ValueType::Number
 }
 
+pub fn is_obj(value: Value) -> bool {
+    value.ty == ValueType::Obj
+}
+
 pub unsafe fn as_bool(value: Value) -> bool {
     value.val.boolean
 }
 
 pub unsafe fn as_number(value: Value) -> f64 {
     value.val.number
+}
+
+pub unsafe fn as_obj(value: Value) -> *mut Obj {
+    value.val.obj
 }
 
 pub fn bool_val(value: bool) -> Value {
@@ -51,6 +63,11 @@ pub const fn nil_val() -> Value {
 pub fn number_val(value: f64) -> Value {
     Value{ ty: ValueType::Number, val: ValueValue{ number: value }}
 }
+
+pub fn obj_val(value: *mut Obj) -> Value {
+    Value{ ty: ValueType::Obj, val: ValueValue{ obj: value }}
+}
+
 pub struct ValueArray {
     pub capacity: i32,
     pub count: i32,
@@ -90,6 +107,7 @@ pub unsafe fn print_value(value: Value) {
         ValueType::Bool => print!("{}", if as_bool(value) { "true" } else { "false" }),
         ValueType::Nil => print!("nil"),
         ValueType::Number => print!("{}", as_number(value)),
+        ValueType::Obj => print_object(value),
     }
 }
 
@@ -101,6 +119,11 @@ pub unsafe fn values_equal(a: Value, b: Value) -> bool {
         ValueType::Bool => as_bool(a) == as_bool(b),
         ValueType::Nil => true,
         ValueType::Number => as_number(a) == as_number(b),
+        ValueType::Obj => {
+            let a_string = &*as_string(a);
+            let b_string = &*as_string(b);
+            a_string.length == b_string.length && todo!("memcmp(a_string.chars, b_string.chars, a_string.length) == 0")
+        }
         _ => false,
     }
 }

@@ -1,6 +1,6 @@
 use std::{mem, ptr, slice, str, u8};
 
-use crate::{chunk::{add_constant, write_chunk, Chunk, OpCode}, debug::disassemble_chunk, scanner::{init_scanner, scan_token, Token, TokenType}, value::{Value, number_val}};
+use crate::{chunk::{add_constant, write_chunk, Chunk, OpCode}, debug::disassemble_chunk, object::{Obj, copy_string}, scanner::{init_scanner, scan_token, Token, TokenType}, value::{Value, number_val, obj_val}};
 
 pub struct Parser {
     pub current: Token,
@@ -206,6 +206,10 @@ unsafe fn number() {
     emit_constant(number_val(value as f64));
 }
 
+unsafe fn string() {
+    emit_constant(obj_val(copy_string(parser.previous.start.add(1), parser.previous.length - 2) as *mut Obj));
+}
+
 unsafe fn unary() {
     let ty = parser.previous.ty;
 
@@ -254,7 +258,7 @@ static rules: [ParseRule; 40] = unsafe {
     set_data!(Less, None, Some(binary), Comparison);
     set_data!(LessEqual, None, Some(binary), Comparison);
     set_data!(Identifier, None, None, None);
-    set_data!(String, None, None, None);
+    set_data!(String, Some(string), None, None);
     set_data!(Number, Some(number), None, None);
     set_data!(And, None, None, None);
     set_data!(Class, None, None, None);

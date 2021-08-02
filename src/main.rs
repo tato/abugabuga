@@ -9,6 +9,7 @@ mod debug;
 mod scanner;
 mod value;
 mod vm;
+mod object;
 
 unsafe fn repl() {
     let stdin = std::io::stdin();
