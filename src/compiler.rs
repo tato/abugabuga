@@ -1,6 +1,12 @@
 use std::{mem, ptr, slice, str, u8};
 
-use crate::{chunk::{add_constant, write_chunk, Chunk, OpCode}, debug::disassemble_chunk, object::{Obj, copy_string}, scanner::{init_scanner, scan_token, Token, TokenType}, value::{Value, number_val, obj_val}};
+use crate::{
+    chunk::{add_constant, write_chunk, Chunk, OpCode},
+    debug::disassemble_chunk,
+    object::{copy_string, Obj},
+    scanner::{init_scanner, scan_token, Token, TokenType},
+    value::{number_val, obj_val, Value},
+};
 
 pub struct Parser {
     pub current: Token,
@@ -207,7 +213,9 @@ unsafe fn number() {
 }
 
 unsafe fn string() {
-    emit_constant(obj_val(copy_string(parser.previous.start.add(1), parser.previous.length - 2) as *mut Obj));
+    emit_constant(obj_val(
+        copy_string(parser.previous.start.add(1), parser.previous.length - 2) as *mut Obj,
+    ));
 }
 
 unsafe fn unary() {

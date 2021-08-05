@@ -1,6 +1,9 @@
 use std::{ffi::c_void, ptr};
 
-use crate::{object::{Obj, ObjString, ObjType}, vm::vm};
+use crate::{
+    object::{Obj, ObjString, ObjType},
+    vm::vm,
+};
 
 macro_rules! allocate {
     ($t:ty, $count:expr) => {
@@ -17,7 +20,7 @@ macro_rules! free {
         crate::memory::reallocate(
             $pointer as *mut std::ffi::c_void,
             std::mem::size_of::<$t>(),
-            0
+            0,
         )
     };
 }

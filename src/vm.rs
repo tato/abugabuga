@@ -1,6 +1,17 @@
 use std::{mem, ptr};
 
-use crate::{chunk::{free_chunk, init_chunk, Chunk, OpCode}, compiler::compile, debug::disassemble_instruction, memory::free_objects, object::{Obj, as_string, is_string, take_string}, value::{Value, as_bool, as_number, bool_val, is_bool, is_nil, is_number, nil_val, number_val, obj_val, print_value, values_equal}};
+use crate::{
+    chunk::{free_chunk, init_chunk, Chunk, OpCode},
+    compiler::compile,
+    debug::disassemble_instruction,
+    memory::free_objects,
+    object::{as_string, is_string, take_string, Obj},
+    table::{free_table, init_table, Table},
+    value::{
+        as_bool, as_number, bool_val, is_bool, is_nil, is_number, nil_val, number_val, obj_val,
+        print_value, values_equal, Value,
+    },
+};
 
 pub const STACK_MAX: usize = 256;
 
@@ -9,6 +20,7 @@ pub struct VM {
     pub ip: *mut u8,
     pub stack: [Value; STACK_MAX],
     pub stack_top: *mut Value,
+    pub strings: Table,
     pub objects: *mut Obj,
 }
 
@@ -25,6 +37,11 @@ pub static mut vm: VM = VM {
     ip: ptr::null_mut(),
     stack: [nil_val(); STACK_MAX],
     stack_top: ptr::null_mut(),
+    strings: Table {
+        count: 0,
+        capacity: 0,
+        entries: ptr::null_mut(),
+    },
     objects: ptr::null_mut(),
 };
 
@@ -43,9 +60,11 @@ macro_rules! runtime_error {
 
 pub unsafe fn init_vm() {
     reset_stack();
+    init_table(&mut vm.strings);
 }
 
 pub unsafe fn free_vm() {
+    free_table(&mut vm.strings);
     free_objects();
 }
 
@@ -150,7 +169,7 @@ unsafe fn run() -> InterpretResult {
             i if i == OpCode::False as u8 => push(bool_val(false)),
             i if i == OpCode::Equal as u8 => {
                 let b = pop();
-                let a  = pop();
+                let a = pop();
                 push(bool_val(values_equal(a, b)));
             }
             i if i == OpCode::Greater as u8 => binary_op!(bool_val, >),
@@ -162,7 +181,7 @@ unsafe fn run() -> InterpretResult {
                     return InterpretResult::RuntimeError;
                 }
                 push(number_val(-as_number(pop())));
-            },
+            }
             i if i == OpCode::Add as u8 => {
                 if is_string(peek(0)) && is_string(peek(1)) {
                     concatenate();
@@ -174,7 +193,7 @@ unsafe fn run() -> InterpretResult {
                     runtime_error!("Operands must be two numbers or two strings.");
                     return InterpretResult::RuntimeError;
                 }
-            },
+            }
             i if i == OpCode::Subtract as u8 => binary_op!(number_val, -),
             i if i == OpCode::Multiply as u8 => binary_op!(number_val, *),
             i if i == OpCode::Divide as u8 => binary_op!(number_val, /),

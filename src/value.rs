@@ -1,6 +1,6 @@
 use std::ptr;
 
-use crate::object::{Obj, as_string, print_object};
+use crate::object::{as_string, print_object, Obj};
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -53,19 +53,31 @@ pub unsafe fn as_obj(value: Value) -> *mut Obj {
 }
 
 pub fn bool_val(value: bool) -> Value {
-    Value{ ty: ValueType::Bool, val: ValueValue{ boolean: value }}
+    Value {
+        ty: ValueType::Bool,
+        val: ValueValue { boolean: value },
+    }
 }
 
 pub const fn nil_val() -> Value {
-    Value{ ty: ValueType::Nil, val: ValueValue{ number: 0.0 }}
+    Value {
+        ty: ValueType::Nil,
+        val: ValueValue { number: 0.0 },
+    }
 }
 
 pub fn number_val(value: f64) -> Value {
-    Value{ ty: ValueType::Number, val: ValueValue{ number: value }}
+    Value {
+        ty: ValueType::Number,
+        val: ValueValue { number: value },
+    }
 }
 
 pub fn obj_val(value: *mut Obj) -> Value {
-    Value{ ty: ValueType::Obj, val: ValueValue{ obj: value }}
+    Value {
+        ty: ValueType::Obj,
+        val: ValueValue { obj: value },
+    }
 }
 
 pub struct ValueArray {
@@ -119,11 +131,7 @@ pub unsafe fn values_equal(a: Value, b: Value) -> bool {
         ValueType::Bool => as_bool(a) == as_bool(b),
         ValueType::Nil => true,
         ValueType::Number => as_number(a) == as_number(b),
-        ValueType::Obj => {
-            let a_string = &*as_string(a);
-            let b_string = &*as_string(b);
-            a_string.length == b_string.length && todo!("memcmp(a_string.chars, b_string.chars, a_string.length) == 0")
-        }
+        ValueType::Obj => as_obj(a) == as_obj(b),
         _ => false,
     }
 }

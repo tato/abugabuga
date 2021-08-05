@@ -6,10 +6,11 @@ mod memory;
 mod chunk;
 mod compiler;
 mod debug;
+mod object;
 mod scanner;
+mod table;
 mod value;
 mod vm;
-mod object;
 
 unsafe fn repl() {
     let stdin = std::io::stdin();
