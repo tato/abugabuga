@@ -1,6 +1,6 @@
 use std::ptr;
 
-use crate::object::{as_string, print_object, Obj};
+use crate::object::{print_object, Obj};
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -132,6 +132,5 @@ pub unsafe fn values_equal(a: Value, b: Value) -> bool {
         ValueType::Nil => true,
         ValueType::Number => as_number(a) == as_number(b),
         ValueType::Obj => as_obj(a) == as_obj(b),
-        _ => false,
     }
 }

@@ -1,4 +1,7 @@
-use std::ptr::{self, null_mut};
+use std::{
+    ptr::{self, null_mut},
+    slice,
+};
 
 use crate::{
     object::ObjString,
@@ -7,6 +10,7 @@ use crate::{
 
 const TABLE_MAX_LOAD: f32 = 0.75;
 
+#[derive(Debug)]
 pub struct Table {
     pub count: i32,
     pub capacity: i32,
@@ -71,7 +75,7 @@ unsafe fn adjust_capacity(table: *mut Table, capacity: i32) {
     let table = &mut *table;
     table.count = 0;
 
-    for i in 0..capacity {
+    for i in 0..table.capacity {
         let entry = &mut *table.entries.offset(i as isize);
         if entry.key == ptr::null_mut() {
             continue;
@@ -173,7 +177,8 @@ pub unsafe fn table_find_string(
             let key = &mut *entry.key;
             if key.length == length
                 && key.hash == hash
-                && todo!("memcmp(key.chars, chars, length) == 0)")
+                && slice::from_raw_parts(key.chars, length as usize)
+                    == slice::from_raw_parts(chars, length as usize)
             {
                 return key;
             }
