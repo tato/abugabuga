@@ -1,4 +1,4 @@
-for (var i = 0; i < 100; i = i + 1) {
+for (var i = 0; i < 3; i = i + 1) {
   var os = "";
   for (var j = 0; j < i; j = j + 1) {
     os = os + "o";

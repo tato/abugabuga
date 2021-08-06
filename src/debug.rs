@@ -51,6 +51,11 @@ pub unsafe fn disassemble_instruction(chunk: *mut Chunk, offset: i32) -> i32 {
         i if i == OpCode::Divide as u8 => simple_instruction("OP_DIVIDE", offset),
         i if i == OpCode::Not as u8 => simple_instruction("OP_NOT", offset),
         i if i == OpCode::Negate as u8 => simple_instruction("OP_NEGATE", offset),
+        i if i == OpCode::Jump as u8 => jump_instruction("OP_JUMP", 1, chunk, offset),
+        i if i == OpCode::JumpIfFalse as u8 => {
+            jump_instruction("OP_JUMP_IF_FALSE", 1, chunk, offset)
+        }
+        i if i == OpCode::Loop as u8 => jump_instruction("OP_LOOP", -1, chunk, offset),
         i if i == OpCode::Print as u8 => simple_instruction("OP_PRINT", offset),
         i if i == OpCode::Return as u8 => simple_instruction("OP_RETURN", offset),
         _ => {
@@ -78,4 +83,11 @@ unsafe fn byte_instruction(name: &str, chunk: *mut Chunk, offset: i32) -> i32 {
     let slot = *(*chunk).code.offset(offset as isize + 1);
     println!("{:-16} {:4}", name, slot);
     offset + 2
+}
+
+unsafe fn jump_instruction(name: &str, sign: i32, chunk: *mut Chunk, offset: i32) -> i32 {
+    let jump = (*vm.ip.offset(offset as isize + 1) as u16) << 8
+        | *vm.ip.offset(offset as isize + 2) as u16;
+    println!("{:-16} {:4} -> {}", name, offset, offset + 3 + sign * jump);
+    offset + 3
 }

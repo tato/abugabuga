@@ -2,7 +2,11 @@ use std::process;
 
 const TESTS: &'static [(&'static str, &'static str)] = &[
     ("breakfast.lox", "beignets with cafe au lait\n"),
-    ("shadowing.lox", "outer\n"),
+    // ("shadowing.lox", "outer\n"),
+    (
+        "amigos.lox",
+        "que pasa amig\nque pasa amigo\nque pasa amigoo\n"
+    )
 ];
 
 #[test]

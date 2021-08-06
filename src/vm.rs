@@ -141,6 +141,12 @@ unsafe fn run() -> InterpretResult {
             *(*vm.chunk).constants.values.add(read_byte!() as usize)
         };
     }
+    macro_rules! read_short {
+        () => {{
+            vm.ip = vm.ip.offset(2);
+            (*vm.ip.offset(-2) as u16) << 8 | *vm.ip.offset(-1) as u16
+        }};
+    }
     macro_rules! read_string {
         () => {
             as_string(read_constant!())
@@ -261,6 +267,20 @@ unsafe fn run() -> InterpretResult {
             i if i == OpCode::Print as u8 => {
                 print_value(pop());
                 println!("");
+            }
+            i if i == OpCode::Jump as u8 => {
+                let offset = read_short!();
+                vm.ip = vm.ip.offset(offset as isize);
+            }
+            i if i == OpCode::JumpIfFalse as u8 => {
+                let offset = read_short!();
+                if is_falsey(peek(0)) {
+                    vm.ip = vm.ip.offset(offset as isize);
+                }
+            }
+            i if i == OpCode::Loop as u8 => {
+                let offset = read_short!();
+                vm.ip = vm.ip.offset(-(offset as isize));
             }
             i if i == OpCode::Return as u8 => {
                 return InterpretResult::Ok;

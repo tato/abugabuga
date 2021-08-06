@@ -176,6 +176,25 @@ unsafe fn emit_bytes(byte1: u8, byte2: u8) {
     emit_byte(byte2);
 }
 
+unsafe fn emit_loop(loop_start: i32) {
+    emit_byte(OpCode::Loop as u8);
+
+    let offset = (*current_chunk()).count - loop_start + 2;
+    if offset > u16::MAX as i32 {
+        error("Loop body too large.");
+    }
+
+    emit_byte(((offset >> 8) & 0xff) as u8);
+    emit_byte((offset & 0xff) as u8);
+}
+
+unsafe fn emit_jump(instruction: u8) -> i32 {
+    emit_byte(instruction);
+    emit_byte(0xff);
+    emit_byte(0xff);
+    (*current_chunk()).count - 2
+}
+
 unsafe fn emit_return() {
     emit_byte(OpCode::Return as u8);
 }
@@ -191,6 +210,17 @@ unsafe fn make_constant(value: Value) -> u8 {
 
 unsafe fn emit_constant(value: Value) {
     emit_bytes(OpCode::Constant as u8, make_constant(value));
+}
+
+unsafe fn patch_jump(offset: i32) {
+    let jump = (*current_chunk()).count - offset - 2;
+
+    if jump > u16::MAX.into() {
+        error("Too much code to jump over.");
+    }
+
+    *(*current_chunk()).code.offset(offset as isize) = ((jump >> 8) & 0xff) as u8;
+    *(*current_chunk()).code.offset(offset as isize + 1) = (jump & 0xff) as u8;
 }
 
 unsafe fn init_compiler(compiler: *mut Compiler) {
@@ -267,6 +297,17 @@ unsafe fn number(_can_assign: bool) {
     .parse()
     .unwrap();
     emit_constant(number_val(value as f64));
+}
+
+unsafe fn or(_can_assign: bool) {
+    let else_jump = emit_jump(OpCode::JumpIfFalse as u8);
+    let end_jump = emit_jump(OpCode::Jump as u8);
+
+    patch_jump(else_jump);
+    emit_byte(OpCode::Pop as u8);
+
+    parse_precedence(Precedence::Or);
+    patch_jump(end_jump);
 }
 
 unsafe fn string(_can_assign: bool) {
@@ -350,7 +391,7 @@ static rules: [ParseRule; 40] = unsafe {
     set_data!(Identifier, Some(variable), None, None);
     set_data!(String, Some(string), None, None);
     set_data!(Number, Some(number), None, None);
-    set_data!(And, None, None, None);
+    set_data!(And, None, Some(and), And);
     set_data!(Class, None, None, None);
     set_data!(Else, None, None, None);
     set_data!(False, Some(literal), None, None);
@@ -358,7 +399,7 @@ static rules: [ParseRule; 40] = unsafe {
     set_data!(Fun, None, None, None);
     set_data!(If, None, None, None);
     set_data!(Nil, Some(literal), None, None);
-    set_data!(Or, None, None, None);
+    set_data!(Or, None, Some(or), Or);
     set_data!(Print, None, None, None);
     set_data!(Return, None, None, None);
     set_data!(Super, None, None, None);
@@ -473,6 +514,15 @@ unsafe fn define_variable(global: u8) {
     emit_bytes(OpCode::DefineGlobal as u8, global);
 }
 
+unsafe fn and(_can_assign: bool) {
+    let end_jump = emit_jump(OpCode::JumpIfFalse as u8);
+
+    emit_byte(OpCode::Pop as u8);
+    parse_precedence(Precedence::And);
+
+    patch_jump(end_jump);
+}
+
 unsafe fn get_rule(ty: TokenType) -> *const ParseRule {
     &rules[ty as u8 as usize]
 }
@@ -511,10 +561,90 @@ unsafe fn expression_statement() {
     emit_byte(OpCode::Pop as u8);
 }
 
+unsafe fn for_statement() {
+    begin_scope();
+
+    consume(TokenType::LeftParen, "Expect '(' after 'for'.");
+    if mtch(TokenType::Semicolon) {
+    } else if mtch(TokenType::Var) {
+        var_declaration();
+    } else {
+        expression_statement();
+    }
+
+    let mut loop_start = (*current_chunk()).count;
+    let mut exit_jump = None;
+    if !mtch(TokenType::Semicolon) {
+        expression();
+        consume(TokenType::Semicolon, "Expect ';' after loop condition.");
+
+        exit_jump = Some(emit_jump(OpCode::JumpIfFalse as u8));
+        emit_byte(OpCode::Pop as u8);
+    }
+
+    if !mtch(TokenType::RightParen) {
+        let body_jump = emit_jump(OpCode::Jump as u8);
+        let increment_start = (*current_chunk()).count;
+        expression();
+        emit_byte(OpCode::Pop as u8);
+        consume(TokenType::RightParen, "Expect ')' after for clauses.");
+
+        emit_loop(loop_start);
+        loop_start = increment_start;
+        patch_jump(body_jump);
+    }
+
+    statement();
+    emit_loop(loop_start);
+
+    if let Some(exit_jump) = exit_jump {
+        patch_jump(exit_jump);
+        emit_byte(OpCode::Pop as u8);
+    }
+
+    end_scope();
+}
+
+unsafe fn if_statement() {
+    consume(TokenType::LeftParen, "Expect '(' after 'if'.");
+    expression();
+    consume(TokenType::RightParen, "Expect ')' after condition.");
+
+    let then_jump = emit_jump(OpCode::JumpIfFalse as u8);
+
+    emit_byte(OpCode::Pop as u8);
+    statement();
+    let else_jump = emit_jump(OpCode::Jump as u8);
+
+    patch_jump(then_jump);
+
+    emit_byte(OpCode::Pop as u8);
+    if mtch(TokenType::Else) {
+        statement()
+    }
+    patch_jump(else_jump);
+}
+
 unsafe fn print_statement() {
     expression();
     consume(TokenType::Semicolon, "Expect ';' after value.");
     emit_byte(OpCode::Print as u8);
+}
+
+unsafe fn while_statement() {
+    let loop_start = (*current_chunk()).count;
+
+    consume(TokenType::LeftParen, "Expect '(' after 'while'.");
+    expression();
+    consume(TokenType::RightParen, "Expect ')' after condition.");
+
+    let exit_jump = emit_jump(OpCode::JumpIfFalse as u8);
+    emit_byte(OpCode::Pop as u8);
+    statement();
+    emit_loop(loop_start);
+
+    patch_jump(exit_jump);
+    emit_byte(OpCode::Pop as u8);
 }
 
 unsafe fn synchronize() {
@@ -555,6 +685,12 @@ unsafe fn declaration() {
 unsafe fn statement() {
     if mtch(TokenType::Print) {
         print_statement();
+    } else if mtch(TokenType::For) {
+        for_statement();
+    } else if mtch(TokenType::If) {
+        if_statement();
+    } else if mtch(TokenType::While) {
+        while_statement();
     } else if mtch(TokenType::LeftBrace) {
         begin_scope();
         block();
