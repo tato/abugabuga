@@ -13,6 +13,9 @@ mod table;
 mod value;
 mod vm;
 
+#[cfg(test)]
+mod test;
+
 unsafe fn repl() {
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();

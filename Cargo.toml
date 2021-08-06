@@ -8,5 +8,3 @@ default = ["debug_trace_execution"]
 debug_trace_execution = []
 debug_print_code = []
 
-
-[dependencies]
