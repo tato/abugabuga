@@ -1,6 +1,8 @@
 use std::{env, fs, process};
 use vm::{free_vm, init_vm, interpret, InterpretResult};
 
+pub const UINT8_COUNT: usize = u8::MAX as usize + 1;
+
 #[macro_use]
 mod memory;
 mod chunk;
@@ -59,31 +61,6 @@ fn main() {
             process::exit(64);
         }
 
-        // let mut chunk: Chunk = mem::zeroed();
-        // init_chunk(&mut chunk);
-
-        // let constant = add_constant(&mut chunk, 1.2);
-        // write_chunk(&mut chunk, OpCode::Constant as u8, 123);
-        // write_chunk(&mut chunk, constant as u8, 123);
-        // let constant = add_constant(&mut chunk, 3.4);
-        // write_chunk(&mut chunk, OpCode::Constant as u8, 123);
-        // write_chunk(&mut chunk, constant as u8, 123);
-
-        // write_chunk(&mut chunk, OpCode::Add as u8, 123);
-
-        // let constant = add_constant(&mut chunk, 5.6);
-        // write_chunk(&mut chunk, OpCode::Constant as u8, 123);
-        // write_chunk(&mut chunk, constant as u8, 123);
-
-        // write_chunk(&mut chunk, OpCode::Divide as u8, 123);
-        // write_chunk(&mut chunk, OpCode::Negate as u8, 123);
-
-        // write_chunk(&mut chunk, OpCode::Return as u8, 123);
-        // disassemble_chunk(&mut chunk, "test chunk");
-
-        // interpret(&mut chunk);
-
         free_vm();
-        // free_chunk(&mut chunk);
     }
 }

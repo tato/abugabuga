@@ -5,6 +5,7 @@ use crate::{
     object::{copy_string, Obj},
     scanner::{init_scanner, scan_token, Token, TokenType},
     value::{number_val, obj_val, Value},
+    UINT8_COUNT,
 };
 
 #[cfg(feature = "debug_print_code")]
@@ -41,6 +42,19 @@ pub struct ParseRule {
     pub precedence: Precedence,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct Local {
+    pub name: Token,
+    pub depth: i32,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Compiler {
+    pub locals: [Local; UINT8_COUNT],
+    pub local_count: i32,
+    pub scope_depth: i32,
+}
+
 #[allow(non_upper_case_globals)]
 pub static mut parser: Parser = Parser {
     current: Token {
@@ -58,6 +72,8 @@ pub static mut parser: Parser = Parser {
     had_error: false,
     panic_mode: false,
 };
+#[allow(non_upper_case_globals)]
+pub static mut current: *mut Compiler = ptr::null_mut();
 #[allow(non_upper_case_globals)]
 pub static mut compiling_chunk: *mut Chunk = ptr::null_mut();
 
@@ -98,6 +114,8 @@ unsafe fn error_at_current(message: &str) {
 
 pub unsafe fn compile(source: &str, chunk: &mut Chunk) -> bool {
     init_scanner(source);
+    let mut compiler: Compiler = mem::zeroed();
+    init_compiler(&mut compiler);
     compiling_chunk = chunk;
 
     parser.had_error = false;
@@ -175,6 +193,13 @@ unsafe fn emit_constant(value: Value) {
     emit_bytes(OpCode::Constant as u8, make_constant(value));
 }
 
+unsafe fn init_compiler(compiler: *mut Compiler) {
+    let compiler = &mut *compiler;
+    compiler.local_count = 0;
+    compiler.scope_depth = 0;
+    current = compiler;
+}
+
 unsafe fn end_compiler() {
     emit_return();
     #[cfg(feature = "debug_print_code")]
@@ -182,6 +207,21 @@ unsafe fn end_compiler() {
         if !parser.had_error {
             disassemble_chunk(current_chunk(), "code");
         }
+    }
+}
+
+unsafe fn begin_scope() {
+    (*current).scope_depth += 1;
+}
+
+unsafe fn end_scope() {
+    (*current).scope_depth -= 1;
+
+    while (*current).local_count > 0
+        && (*current).locals[(*current).local_count as usize].depth > (*current).scope_depth
+    {
+        emit_byte(OpCode::Pop as u8);
+        (*current).local_count;
     }
 }
 
@@ -236,13 +276,23 @@ unsafe fn string(_can_assign: bool) {
 }
 
 unsafe fn named_variable(name: Token, can_assign: bool) {
-    let arg = identifier_constant(&name);
+    let (get_op, set_op);
+    let mut arg = resolve_local(current, &name);
+    if arg != -1 {
+        get_op = OpCode::GetLocal;
+        set_op = OpCode::SetLocal;
+    } else {
+        arg = identifier_constant(&name).into();
+        get_op = OpCode::GetGlobal;
+        set_op = OpCode::SetGlobal;
+    }
+    let arg = arg as u8;
 
     if can_assign && mtch(TokenType::Equal) {
         expression();
-        emit_bytes(OpCode::SetGlobal as u8, arg);
+        emit_bytes(set_op as u8, arg);
     } else {
-        emit_bytes(OpCode::GetGlobal as u8, arg);
+        emit_bytes(get_op as u8, arg);
     }
 }
 
@@ -347,12 +397,79 @@ unsafe fn identifier_constant(name: &Token) -> u8 {
     make_constant(obj_val(copy_string(name.start, name.length) as *mut Obj))
 }
 
+unsafe fn identifiers_equal(a: &Token, b: &Token) -> bool {
+    if a.length != b.length {
+        return false;
+    }
+    slice::from_raw_parts(a.start, a.length as usize)
+        == slice::from_raw_parts(b.start, b.length as usize)
+}
+
+unsafe fn resolve_local(compiler: *mut Compiler, name: &Token) -> i32 {
+    for i in (0..(*compiler).local_count).rev() {
+        let local = &(*compiler).locals[i as usize];
+        if identifiers_equal(name, &local.name) {
+            if local.depth == -1 {
+                error("Can't read local variable in its own initializer.");
+            }
+            return i;
+        }
+    }
+    return -1;
+}
+
+unsafe fn add_local(name: Token) {
+    if (*current).local_count as usize == UINT8_COUNT {
+        error("Too many local variables in scope.");
+        return;
+    }
+
+    let local = &mut (*current).locals[(*current).local_count as usize];
+    (*current).local_count += 1;
+    local.name = name;
+    local.depth = -1;
+}
+
+unsafe fn declare_variable() {
+    if (*current).scope_depth == 0 {
+        return;
+    }
+
+    let name = &parser.previous;
+    for i in (0..(*current).local_count - 1).rev() {
+        let local = &(*current).locals[i as usize];
+        if local.depth != -1 && local.depth < (*current).scope_depth {
+            break;
+        }
+
+        if identifiers_equal(name, &local.name) {
+            error("Already a variable with this name in this scope.");
+        }
+    }
+    add_local(*name);
+}
+
 unsafe fn parse_variable(error_message: &str) -> u8 {
     consume(TokenType::Identifier, error_message);
+
+    declare_variable();
+    if (*current).scope_depth > 0 {
+        return 0;
+    }
+
     identifier_constant(&parser.previous)
 }
 
+unsafe fn mark_initialized() {
+    (*current).locals[(*current).local_count as usize - 1].depth = (*current).scope_depth;
+}
+
 unsafe fn define_variable(global: u8) {
+    if (*current).scope_depth > 0 {
+        mark_initialized();
+        return; // runtime NOP, keep initializer temporary on top of the stack
+    }
+
     emit_bytes(OpCode::DefineGlobal as u8, global);
 }
 
@@ -362,6 +479,13 @@ unsafe fn get_rule(ty: TokenType) -> *const ParseRule {
 
 unsafe fn expression() {
     parse_precedence(Precedence::Assignment);
+}
+
+unsafe fn block() {
+    while !check(TokenType::RightBrace) && !check(TokenType::Eof) {
+        declaration();
+    }
+    consume(TokenType::RightBrace, "Expect '}' after block.");
 }
 
 unsafe fn var_declaration() {
@@ -431,6 +555,10 @@ unsafe fn declaration() {
 unsafe fn statement() {
     if mtch(TokenType::Print) {
         print_statement();
+    } else if mtch(TokenType::LeftBrace) {
+        begin_scope();
+        block();
+        end_scope();
     } else {
         expression_statement();
     }

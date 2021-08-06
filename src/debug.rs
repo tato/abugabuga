@@ -35,6 +35,8 @@ pub unsafe fn disassemble_instruction(chunk: *mut Chunk, offset: i32) -> i32 {
         i if i == OpCode::True as u8 => simple_instruction("OP_TRUE", offset),
         i if i == OpCode::False as u8 => simple_instruction("OP_FALSE", offset),
         i if i == OpCode::Pop as u8 => simple_instruction("OP_POP", offset),
+        i if i == OpCode::GetLocal as u8 => byte_instruction("OP_GET_LOCAL", chunk, offset),
+        i if i == OpCode::SetLocal as u8 => byte_instruction("OPSET_LOCAL", chunk, offset),
         i if i == OpCode::GetGlobal as u8 => constant_instruction("OP_GET_GLOBAL", chunk, offset),
         i if i == OpCode::DefineGlobal as u8 => {
             constant_instruction("OP_DEFINE_GLOBAL", chunk, offset)
@@ -69,5 +71,11 @@ unsafe fn constant_instruction(name: &str, chunk: *mut Chunk, offset: i32) -> i3
     print!("{:-16} {:4} '", name, constant);
     print_value(*chunk.constants.values.add(constant as usize));
     println!("'");
+    offset + 2
+}
+
+unsafe fn byte_instruction(name: &str, chunk: *mut Chunk, offset: i32) -> i32 {
+    let slot = *(*chunk).code.offset(offset as isize + 1);
+    println!("{:-16} {:4}", name, slot);
     offset + 2
 }

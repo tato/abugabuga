@@ -185,6 +185,14 @@ unsafe fn run() -> InterpretResult {
             i if i == OpCode::Pop as u8 => {
                 pop();
             }
+            i if i == OpCode::GetLocal as u8 => {
+                let slot = read_byte!();
+                push(vm.stack[slot as usize]);
+            }
+            i if i == OpCode::SetLocal as u8 => {
+                let slot = read_byte!();
+                vm.stack[slot as usize] = peek(0);
+            }
             i if i == OpCode::GetGlobal as u8 => {
                 let name = read_string!();
                 let mut value = nil_val(); // @todo uninitialized
