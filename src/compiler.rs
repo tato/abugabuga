@@ -2,11 +2,13 @@ use std::{mem, ptr, slice, str, u8};
 
 use crate::{
     chunk::{add_constant, write_chunk, Chunk, OpCode},
-    debug::disassemble_chunk,
     object::{copy_string, Obj},
     scanner::{init_scanner, scan_token, Token, TokenType},
     value::{number_val, obj_val, Value},
 };
+
+#[cfg(feature = "debug_print_code")]
+use crate::debug::disassemble_chunk;
 
 pub struct Parser {
     pub current: Token,
@@ -30,7 +32,7 @@ pub enum Precedence {
     Primary,
 }
 
-type ParseFn = unsafe fn();
+type ParseFn = unsafe fn(bool);
 
 #[derive(Clone, Copy)]
 pub struct ParseRule {
@@ -102,8 +104,11 @@ pub unsafe fn compile(source: &str, chunk: &mut Chunk) -> bool {
     parser.panic_mode = false;
 
     advance();
-    expression();
-    consume(TokenType::Eof, "Expect end of expression.");
+
+    while !mtch(TokenType::Eof) {
+        declaration();
+    }
+
     end_compiler();
     !parser.had_error
 }
@@ -130,6 +135,18 @@ unsafe fn consume(ty: TokenType, message: &str) {
     }
 
     error_at_current(message);
+}
+
+unsafe fn check(ty: TokenType) -> bool {
+    return parser.current.ty == ty;
+}
+
+unsafe fn mtch(ty: TokenType) -> bool {
+    if !check(ty) {
+        return false;
+    }
+    advance();
+    true
 }
 
 unsafe fn emit_byte(byte: u8) {
@@ -168,7 +185,7 @@ unsafe fn end_compiler() {
     }
 }
 
-unsafe fn binary() {
+unsafe fn binary(_can_assign: bool) {
     let operator_type = parser.previous.ty;
     let rule = get_rule(operator_type);
     parse_precedence(mem::transmute((*rule).precedence as u8 + 1));
@@ -188,7 +205,7 @@ unsafe fn binary() {
     }
 }
 
-unsafe fn literal() {
+unsafe fn literal(_can_assign: bool) {
     match parser.previous.ty {
         TokenType::False => emit_byte(OpCode::False as u8),
         TokenType::Nil => emit_byte(OpCode::Nil as u8),
@@ -197,12 +214,12 @@ unsafe fn literal() {
     }
 }
 
-unsafe fn grouping() {
+unsafe fn grouping(_can_assign: bool) {
     expression();
     consume(TokenType::RightParen, "Expect ')' after expression.");
 }
 
-unsafe fn number() {
+unsafe fn number(_can_assign: bool) {
     let value: f32 = str::from_utf8_unchecked(slice::from_raw_parts(
         parser.previous.start,
         parser.previous.length as usize,
@@ -212,13 +229,28 @@ unsafe fn number() {
     emit_constant(number_val(value as f64));
 }
 
-unsafe fn string() {
+unsafe fn string(_can_assign: bool) {
     emit_constant(obj_val(
         copy_string(parser.previous.start.add(1), parser.previous.length - 2) as *mut Obj,
     ));
 }
 
-unsafe fn unary() {
+unsafe fn named_variable(name: Token, can_assign: bool) {
+    let arg = identifier_constant(&name);
+
+    if can_assign && mtch(TokenType::Equal) {
+        expression();
+        emit_bytes(OpCode::SetGlobal as u8, arg);
+    } else {
+        emit_bytes(OpCode::GetGlobal as u8, arg);
+    }
+}
+
+unsafe fn variable(can_assign: bool) {
+    named_variable(parser.previous, can_assign);
+}
+
+unsafe fn unary(_can_assign: bool) {
     let ty = parser.previous.ty;
 
     parse_precedence(Precedence::Unary);
@@ -265,7 +297,7 @@ static rules: [ParseRule; 40] = unsafe {
     set_data!(GreaterEqual, None, Some(binary), Comparison);
     set_data!(Less, None, Some(binary), Comparison);
     set_data!(LessEqual, None, Some(binary), Comparison);
-    set_data!(Identifier, None, None, None);
+    set_data!(Identifier, Some(variable), None, None);
     set_data!(String, Some(string), None, None);
     set_data!(Number, Some(number), None, None);
     set_data!(And, None, None, None);
@@ -296,13 +328,32 @@ unsafe fn parse_precedence(precedence: Precedence) {
         error("Expect expression.");
         return;
     }
-    (prefix_rule.unwrap())();
+
+    let can_assign = precedence <= Precedence::Assignment;
+    (prefix_rule.unwrap())(can_assign);
 
     while precedence <= (*get_rule(parser.current.ty)).precedence {
         advance();
         let infix_rule = (*get_rule(parser.previous.ty)).infix;
-        (infix_rule.unwrap())();
+        (infix_rule.unwrap())(can_assign);
     }
+
+    if can_assign && mtch(TokenType::Equal) {
+        error("Invalid assignment target.");
+    }
+}
+
+unsafe fn identifier_constant(name: &Token) -> u8 {
+    make_constant(obj_val(copy_string(name.start, name.length) as *mut Obj))
+}
+
+unsafe fn parse_variable(error_message: &str) -> u8 {
+    consume(TokenType::Identifier, error_message);
+    identifier_constant(&parser.previous)
+}
+
+unsafe fn define_variable(global: u8) {
+    emit_bytes(OpCode::DefineGlobal as u8, global);
 }
 
 unsafe fn get_rule(ty: TokenType) -> *const ParseRule {
@@ -311,4 +362,76 @@ unsafe fn get_rule(ty: TokenType) -> *const ParseRule {
 
 unsafe fn expression() {
     parse_precedence(Precedence::Assignment);
+}
+
+unsafe fn var_declaration() {
+    let global = parse_variable("Expect variable name.");
+
+    if mtch(TokenType::Equal) {
+        expression();
+    } else {
+        emit_byte(OpCode::Nil as u8);
+    }
+
+    consume(
+        TokenType::Semicolon,
+        "Expect ';' after variable declaration.",
+    );
+
+    define_variable(global);
+}
+
+unsafe fn expression_statement() {
+    expression();
+    consume(TokenType::Semicolon, "Expect ';' after expression;");
+    emit_byte(OpCode::Pop as u8);
+}
+
+unsafe fn print_statement() {
+    expression();
+    consume(TokenType::Semicolon, "Expect ';' after value.");
+    emit_byte(OpCode::Print as u8);
+}
+
+unsafe fn synchronize() {
+    parser.panic_mode = false;
+
+    while parser.current.ty != TokenType::Eof {
+        if parser.previous.ty == TokenType::Semicolon {
+            return;
+        }
+        match parser.current.ty {
+            TokenType::Class
+            | TokenType::Fun
+            | TokenType::Var
+            | TokenType::For
+            | TokenType::If
+            | TokenType::While
+            | TokenType::Print
+            | TokenType::Return => return,
+            _ => {}
+        }
+
+        advance();
+    }
+}
+
+unsafe fn declaration() {
+    if mtch(TokenType::Var) {
+        var_declaration();
+    } else {
+        statement();
+    }
+
+    if parser.panic_mode {
+        synchronize();
+    }
+}
+
+unsafe fn statement() {
+    if mtch(TokenType::Print) {
+        print_statement();
+    } else {
+        expression_statement();
+    }
 }

@@ -5,6 +5,7 @@ use crate::{
     value::print_value,
 };
 
+#[cfg(feature = "debug_print_code")]
 pub unsafe fn disassemble_chunk(chunk: *mut Chunk, name: &str) {
     println!("== {} ==", name);
     let chunk = &mut *chunk;
@@ -33,6 +34,12 @@ pub unsafe fn disassemble_instruction(chunk: *mut Chunk, offset: i32) -> i32 {
         i if i == OpCode::Nil as u8 => simple_instruction("OP_NIL", offset),
         i if i == OpCode::True as u8 => simple_instruction("OP_TRUE", offset),
         i if i == OpCode::False as u8 => simple_instruction("OP_FALSE", offset),
+        i if i == OpCode::Pop as u8 => simple_instruction("OP_POP", offset),
+        i if i == OpCode::GetGlobal as u8 => constant_instruction("OP_GET_GLOBAL", chunk, offset),
+        i if i == OpCode::DefineGlobal as u8 => {
+            constant_instruction("OP_DEFINE_GLOBAL", chunk, offset)
+        }
+        i if i == OpCode::SetGlobal as u8 => constant_instruction("OP_SET_GLOBAL", chunk, offset),
         i if i == OpCode::Equal as u8 => simple_instruction("OP_EQUAL", offset),
         i if i == OpCode::Greater as u8 => simple_instruction("OP_GREATER", offset),
         i if i == OpCode::Less as u8 => simple_instruction("OP_LESS", offset),
@@ -42,6 +49,7 @@ pub unsafe fn disassemble_instruction(chunk: *mut Chunk, offset: i32) -> i32 {
         i if i == OpCode::Divide as u8 => simple_instruction("OP_DIVIDE", offset),
         i if i == OpCode::Not as u8 => simple_instruction("OP_NOT", offset),
         i if i == OpCode::Negate as u8 => simple_instruction("OP_NEGATE", offset),
+        i if i == OpCode::Print as u8 => simple_instruction("OP_PRINT", offset),
         i if i == OpCode::Return as u8 => simple_instruction("OP_RETURN", offset),
         _ => {
             println!("Unknown opcode {}", instruction);

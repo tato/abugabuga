@@ -5,6 +5,7 @@ use vm::{free_vm, init_vm, interpret, InterpretResult};
 mod memory;
 mod chunk;
 mod compiler;
+#[cfg(any(feature = "debug_trace_execution", feature = "debug_print_code"))]
 mod debug;
 mod object;
 mod scanner;

@@ -3,15 +3,17 @@ use std::{mem, ptr};
 use crate::{
     chunk::{free_chunk, init_chunk, Chunk, OpCode},
     compiler::compile,
-    debug::disassemble_instruction,
     memory::free_objects,
     object::{as_string, is_string, take_string, Obj},
-    table::{free_table, init_table, Table},
+    table::{free_table, init_table, table_delete, table_get, table_set, Table},
     value::{
         as_bool, as_number, bool_val, is_bool, is_nil, is_number, nil_val, number_val, obj_val,
         print_value, values_equal, Value,
     },
 };
+
+#[cfg(feature = "debug_trace_execution")]
+use crate::debug::disassemble_instruction;
 
 pub const STACK_MAX: usize = 256;
 
@@ -20,6 +22,7 @@ pub struct VM {
     pub ip: *mut u8,
     pub stack: [Value; STACK_MAX],
     pub stack_top: *mut Value,
+    pub globals: Table,
     pub strings: Table,
     pub objects: *mut Obj,
 }
@@ -37,6 +40,11 @@ pub static mut vm: VM = VM {
     ip: ptr::null_mut(),
     stack: [nil_val(); STACK_MAX],
     stack_top: ptr::null_mut(),
+    globals: Table {
+        count: 0,
+        capacity: 0,
+        entries: ptr::null_mut(),
+    },
     strings: Table {
         count: 0,
         capacity: 0,
@@ -50,8 +58,8 @@ unsafe fn reset_stack() {
 }
 
 macro_rules! runtime_error {
-    ($args:tt) => {
-        eprintln!($args);
+    ($($args:expr),*) => {
+        eprintln!($($args),*);
         let instruction = vm.ip.sub((*vm.chunk).code.sub(1) as usize);
         let line = *(*vm.chunk).lines.offset(instruction as isize);
         eprintln!("[line {}] in script", line);
@@ -60,10 +68,12 @@ macro_rules! runtime_error {
 
 pub unsafe fn init_vm() {
     reset_stack();
+    init_table(&mut vm.globals);
     init_table(&mut vm.strings);
 }
 
 pub unsafe fn free_vm() {
+    free_table(&mut vm.globals);
     free_table(&mut vm.strings);
     free_objects();
 }
@@ -131,6 +141,11 @@ unsafe fn run() -> InterpretResult {
             *(*vm.chunk).constants.values.add(read_byte!() as usize)
         };
     }
+    macro_rules! read_string {
+        () => {
+            as_string(read_constant!())
+        };
+    }
     macro_rules! binary_op {
         ($value_type:ident, $op:tt) => {{
             if !is_number(peek(0)) || !is_number(peek(1)) {
@@ -167,6 +182,44 @@ unsafe fn run() -> InterpretResult {
             i if i == OpCode::Nil as u8 => push(nil_val()),
             i if i == OpCode::True as u8 => push(bool_val(true)),
             i if i == OpCode::False as u8 => push(bool_val(false)),
+            i if i == OpCode::Pop as u8 => {
+                pop();
+            }
+            i if i == OpCode::GetGlobal as u8 => {
+                let name = read_string!();
+                let mut value = nil_val(); // @todo uninitialized
+                if !table_get(&mut vm.globals, name, &mut value) {
+                    runtime_error!(
+                        "Undefined variable '{}'.",
+                        std::str::from_utf8_unchecked(std::slice::from_raw_parts(
+                            (*name).chars,
+                            (*name).length as usize
+                        ))
+                    );
+                    return InterpretResult::RuntimeError;
+                }
+                push(value);
+            }
+            i if i == OpCode::DefineGlobal as u8 => {
+                let name = read_string!();
+                table_set(&mut vm.globals, name, peek(0));
+                pop();
+            }
+            i if i == OpCode::SetGlobal as u8 => {
+                let name = read_string!();
+                if table_set(&mut vm.globals, name, peek(0)) {
+                    // true means key wasn't in table
+                    table_delete(&mut vm.globals, name);
+                    runtime_error!(
+                        "Undefined variable '{}'.",
+                        std::str::from_utf8_unchecked(std::slice::from_raw_parts(
+                            (*name).chars,
+                            (*name).length as usize
+                        ))
+                    );
+                    return InterpretResult::RuntimeError;
+                }
+            }
             i if i == OpCode::Equal as u8 => {
                 let b = pop();
                 let a = pop();
@@ -197,9 +250,11 @@ unsafe fn run() -> InterpretResult {
             i if i == OpCode::Subtract as u8 => binary_op!(number_val, -),
             i if i == OpCode::Multiply as u8 => binary_op!(number_val, *),
             i if i == OpCode::Divide as u8 => binary_op!(number_val, /),
-            i if i == OpCode::Return as u8 => {
+            i if i == OpCode::Print as u8 => {
                 print_value(pop());
                 println!("");
+            }
+            i if i == OpCode::Return as u8 => {
                 return InterpretResult::Ok;
             }
             _ => break,
