@@ -1,25 +1,37 @@
-use std::{mem, ptr};
+use std::{mem, ptr, time::{Duration, SystemTime, UNIX_EPOCH}};
 
 use crate::{
-    chunk::{free_chunk, init_chunk, Chunk, OpCode},
+    chunk::OpCode,
     compiler::compile,
     memory::free_objects,
-    object::{as_string, is_string, take_string, Obj},
+    object::{
+        as_function, as_native, as_string, copy_string, is_string, new_native, obj_type,
+        take_string, NativeFn, Obj, ObjFunction, ObjType,
+    },
     table::{free_table, init_table, table_delete, table_get, table_set, Table},
     value::{
-        as_bool, as_number, bool_val, is_bool, is_nil, is_number, nil_val, number_val, obj_val,
-        print_value, values_equal, Value,
+        as_bool, as_number, bool_val, is_bool, is_nil, is_number, is_obj, nil_val, number_val,
+        obj_val, print_value, values_equal, Value,
     },
 };
 
 #[cfg(feature = "debug_trace_execution")]
 use crate::debug::disassemble_instruction;
 
-pub const STACK_MAX: usize = 256;
+pub const FRAMES_MAX: usize = 64;
+pub const STACK_MAX: usize = FRAMES_MAX * u8::MAX as usize;
+
+#[derive(Clone, Copy)]
+pub struct CallFrame {
+    pub function: *mut ObjFunction,
+    pub ip: *mut u8,
+    pub slots: *mut Value,
+}
 
 pub struct VM {
-    pub chunk: *mut Chunk,
-    pub ip: *mut u8,
+    pub frames: [CallFrame; FRAMES_MAX],
+    pub frame_count: i32,
+
     pub stack: [Value; STACK_MAX],
     pub stack_top: *mut Value,
     pub globals: Table,
@@ -34,10 +46,16 @@ pub enum InterpretResult {
     RuntimeError,
 }
 
+const ZERO_CALL_FRAME: CallFrame = CallFrame {
+    function: ptr::null_mut(),
+    ip: ptr::null_mut(),
+    slots: ptr::null_mut(),
+};
+
 #[allow(non_upper_case_globals)]
 pub static mut vm: VM = VM {
-    chunk: ptr::null_mut(),
-    ip: ptr::null_mut(),
+    frames: [ZERO_CALL_FRAME; FRAMES_MAX],
+    frame_count: 0,
     stack: [nil_val(); STACK_MAX],
     stack_top: ptr::null_mut(),
     globals: Table {
@@ -53,23 +71,68 @@ pub static mut vm: VM = VM {
     objects: ptr::null_mut(),
 };
 
+unsafe fn clock_native(_arg_count: i32, _args: *mut Value) -> Value {
+    let clock = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or(Duration::from_secs(0))
+        .as_secs_f64();
+    return number_val(clock);
+}
+
 unsafe fn reset_stack() {
     vm.stack_top = vm.stack.as_mut_ptr();
+    vm.frame_count = 0;
+}
+
+unsafe fn _runtime_error() {
+    for i in (0..vm.frame_count).rev() {
+        let frame = &mut vm.frames[i as usize];
+        let function = frame.function;
+        let instruction = frame.ip.sub((*function).chunk.code as usize).sub(1) as usize;
+        eprint!("[line {}] in ", *(*function).chunk.lines.add(instruction));
+        if (*function).name == ptr::null() {
+            eprintln!("script");
+        } else {
+            let name = &*(*function).name;
+            eprintln!(
+                "{}()",
+                std::str::from_utf8_unchecked(std::slice::from_raw_parts(
+                    name.chars,
+                    name.length as usize
+                ))
+            );
+        }
+    }
+
+    let frame = &vm.frames[vm.frame_count as usize - 1];
+    let instruction = frame.ip.sub((*frame.function).chunk.code.sub(1) as usize);
+    let line = *(*frame.function).chunk.lines.offset(instruction as isize);
+    eprintln!("[line {}] in script", line);
 }
 
 macro_rules! runtime_error {
     ($($args:expr),*) => {
         eprintln!($($args),*);
-        let instruction = vm.ip.sub((*vm.chunk).code.sub(1) as usize);
-        let line = *(*vm.chunk).lines.offset(instruction as isize);
-        eprintln!("[line {}] in script", line);
+        _runtime_error();
     };
+}
+
+unsafe fn define_native(name: &str, function: NativeFn) {
+    push(obj_val(
+        copy_string(name.as_ptr(), name.len() as i32) as *mut Obj
+    ));
+    push(obj_val(new_native(function) as *mut Obj));
+    table_set(&mut vm.globals, as_string(vm.stack[0]), vm.stack[1]);
+    pop();
+    pop();
 }
 
 pub unsafe fn init_vm() {
     reset_stack();
     init_table(&mut vm.globals);
     init_table(&mut vm.strings);
+
+    define_native("clock", clock_native);
 }
 
 pub unsafe fn free_vm() {
@@ -79,20 +142,16 @@ pub unsafe fn free_vm() {
 }
 
 pub unsafe fn interpret(source: &str) -> InterpretResult {
-    let mut chunk = mem::zeroed();
-    init_chunk(&mut chunk);
-
-    if !compile(source, &mut chunk) {
-        free_chunk(&mut chunk);
+    let function = compile(source);
+    if function == ptr::null_mut() {
         return InterpretResult::CompileError;
     }
 
-    vm.chunk = &mut chunk;
-    vm.ip = (*vm.chunk).code;
+    push(obj_val(function as *mut Obj));
+    call(function, 0);
 
     let result = run();
 
-    free_chunk(&mut chunk);
     result
 }
 
@@ -108,6 +167,47 @@ pub unsafe fn pop() -> Value {
 
 unsafe fn peek(distance: isize) -> Value {
     *vm.stack_top.offset(-1 - distance)
+}
+
+unsafe fn call(function: *mut ObjFunction, arg_count: i32) -> bool {
+    if arg_count != (*function).arity {
+        runtime_error!(
+            "Expected {} arguments but got {}.",
+            (*function).arity,
+            arg_count
+        );
+        return false;
+    }
+
+    if vm.frame_count as usize >= FRAMES_MAX {
+        runtime_error!("Stack overflow.");
+        return false;
+    }
+
+    let frame = &mut vm.frames[vm.frame_count as usize];
+    vm.frame_count += 1;
+    frame.function = function;
+    frame.ip = (*function).chunk.code;
+    frame.slots = vm.stack_top.sub(arg_count as usize).sub(1);
+    true
+}
+
+unsafe fn call_value(callee: Value, arg_count: i32) -> bool {
+    if is_obj(callee) {
+        match obj_type(callee) {
+            ObjType::Function => return call(as_function(callee), arg_count),
+            ObjType::Native => {
+                let native = as_native(callee);
+                let result = (native)(arg_count, vm.stack_top.sub(arg_count as usize));
+                vm.stack_top = vm.stack_top.sub(arg_count as usize + 1);
+                push(result);
+                return true;
+            }
+            _ => {}
+        }
+    }
+    runtime_error!("Can only call functions and classes.");
+    false
 }
 
 unsafe fn is_falsey(value: Value) -> bool {
@@ -129,23 +229,29 @@ unsafe fn concatenate() {
 }
 
 unsafe fn run() -> InterpretResult {
+    let mut frame = &mut vm.frames[vm.frame_count as usize - 1];
+
     macro_rules! read_byte {
         () => {{
-            let v = *vm.ip;
-            vm.ip = vm.ip.add(1);
+            let v = *frame.ip;
+            frame.ip = frame.ip.add(1);
             v
+        }};
+    }
+    macro_rules! read_short {
+        () => {{
+            frame.ip = frame.ip.offset(2);
+            (*frame.ip.offset(-2) as u16) << 8 | *frame.ip.offset(-1) as u16
         }};
     }
     macro_rules! read_constant {
         () => {
-            *(*vm.chunk).constants.values.add(read_byte!() as usize)
+            *(*frame.function)
+                .chunk
+                .constants
+                .values
+                .add(read_byte!() as usize)
         };
-    }
-    macro_rules! read_short {
-        () => {{
-            vm.ip = vm.ip.offset(2);
-            (*vm.ip.offset(-2) as u16) << 8 | *vm.ip.offset(-1) as u16
-        }};
     }
     macro_rules! read_string {
         () => {
@@ -176,7 +282,10 @@ unsafe fn run() -> InterpretResult {
                 slot = slot.add(1);
             }
             println!("");
-            disassemble_instruction(vm.chunk, vm.ip.sub((*vm.chunk).code as usize) as i32);
+            disassemble_instruction(
+                &mut (*frame.function).chunk,
+                frame.ip.sub((*frame.function).chunk.code as usize) as i32,
+            );
         }
 
         let instruction = read_byte!();
@@ -193,11 +302,11 @@ unsafe fn run() -> InterpretResult {
             }
             i if i == OpCode::GetLocal as u8 => {
                 let slot = read_byte!();
-                push(vm.stack[slot as usize]);
+                push(*frame.slots.offset(slot as isize));
             }
             i if i == OpCode::SetLocal as u8 => {
                 let slot = read_byte!();
-                vm.stack[slot as usize] = peek(0);
+                *frame.slots.offset(slot as isize) = peek(0);
             }
             i if i == OpCode::GetGlobal as u8 => {
                 let name = read_string!();
@@ -270,20 +379,35 @@ unsafe fn run() -> InterpretResult {
             }
             i if i == OpCode::Jump as u8 => {
                 let offset = read_short!();
-                vm.ip = vm.ip.offset(offset as isize);
+                frame.ip = frame.ip.offset(offset as isize);
             }
             i if i == OpCode::JumpIfFalse as u8 => {
                 let offset = read_short!();
                 if is_falsey(peek(0)) {
-                    vm.ip = vm.ip.offset(offset as isize);
+                    frame.ip = frame.ip.offset(offset as isize);
                 }
             }
             i if i == OpCode::Loop as u8 => {
                 let offset = read_short!();
-                vm.ip = vm.ip.offset(-(offset as isize));
+                frame.ip = frame.ip.offset(-(offset as isize));
+            }
+            i if i == OpCode::Call as u8 => {
+                let arg_count = read_byte!();
+                if !call_value(peek(arg_count.into()), arg_count.into()) {
+                    return InterpretResult::RuntimeError;
+                }
+                frame = &mut vm.frames[vm.frame_count as usize - 1];
             }
             i if i == OpCode::Return as u8 => {
-                return InterpretResult::Ok;
+                let result = pop();
+                vm.frame_count -= 1;
+                if vm.frame_count == 0 {
+                    pop();
+                    return InterpretResult::Ok;
+                }
+                vm.stack_top = frame.slots;
+                push(result);
+                frame = &mut vm.frames[vm.frame_count as usize - 1];
             }
             _ => break,
         }

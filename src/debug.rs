@@ -57,6 +57,7 @@ pub unsafe fn disassemble_instruction(chunk: *mut Chunk, offset: i32) -> i32 {
         }
         i if i == OpCode::Loop as u8 => jump_instruction("OP_LOOP", -1, chunk, offset),
         i if i == OpCode::Print as u8 => simple_instruction("OP_PRINT", offset),
+        i if i == OpCode::Call as u8 => byte_instruction("OP_CALL", chunk, offset),
         i if i == OpCode::Return as u8 => simple_instruction("OP_RETURN", offset),
         _ => {
             println!("Unknown opcode {}", instruction);

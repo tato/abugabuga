@@ -1,6 +1,7 @@
 use std::{ptr, slice, str};
 
 use crate::{
+    chunk::{init_chunk, Chunk},
     memory::reallocate,
     table::{table_find_string, table_set},
     value::{as_obj, is_obj, nil_val, Value},
@@ -50,8 +51,24 @@ pub unsafe fn obj_type(value: Value) -> ObjType {
     (*as_obj(value)).ty
 }
 
+pub unsafe fn _is_function(value: Value) -> bool {
+    is_obj_type(value, ObjType::Function)
+}
+
+pub unsafe fn _is_native(value: Value) -> bool {
+    is_obj_type(value, ObjType::Native)
+}
+
 pub unsafe fn is_string(value: Value) -> bool {
     is_obj_type(value, ObjType::String)
+}
+
+pub unsafe fn as_function(value: Value) -> *mut ObjFunction {
+    as_obj(value) as *mut ObjFunction
+}
+
+pub unsafe fn as_native(value: Value) -> NativeFn {
+    (*(as_obj(value) as *mut ObjNative)).function
 }
 
 pub unsafe fn as_string(value: Value) -> *mut ObjString {
@@ -69,19 +86,52 @@ unsafe fn is_obj_type(value: Value, ty: ObjType) -> bool {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ObjType {
+    Function,
+    Native,
     String,
 }
 
+#[repr(C)]
 pub struct Obj {
     pub ty: ObjType,
     pub next: *mut Obj,
 }
 
+#[repr(C)]
+pub struct ObjFunction {
+    pub obj: Obj,
+    pub arity: i32,
+    pub chunk: Chunk,
+    pub name: *const ObjString,
+}
+
+pub type NativeFn = unsafe fn(i32, *mut Value) -> Value;
+
+pub struct ObjNative {
+    pub obj: Obj,
+    pub function: NativeFn,
+}
+
+#[repr(C)]
 pub struct ObjString {
     pub obj: Obj,
     pub length: i32,
     pub chars: *const u8,
     pub hash: u32,
+}
+
+pub unsafe fn new_function() -> *mut ObjFunction {
+    let function = allocate_obj!(ObjFunction, ObjType::Function);
+    (*function).arity = 0;
+    (*function).name = ptr::null_mut();
+    init_chunk(&mut (*function).chunk);
+    function
+}
+
+pub unsafe fn new_native(function: NativeFn) -> *mut ObjNative {
+    let native = allocate_obj!(ObjNative, ObjType::Native);
+    (*native).function = function;
+    native
 }
 
 pub unsafe fn take_string(chars: *mut u8, length: i32) -> *mut ObjString {
@@ -106,8 +156,23 @@ pub unsafe fn copy_string(chars: *const u8, length: i32) -> *mut ObjString {
     allocate_string(heap_chars, length, hash)
 }
 
+unsafe fn print_function(function: *mut ObjFunction) {
+    if (*function).name == ptr::null_mut() {
+        print!("<script>");
+        return;
+    }
+
+    let name = &*(*function).name;
+    print!(
+        "<fn {}>",
+        str::from_utf8_unchecked(slice::from_raw_parts(name.chars, name.length as usize))
+    );
+}
+
 pub unsafe fn print_object(value: Value) {
     match obj_type(value) {
+        ObjType::Function => print_function(as_function(value)),
+        ObjType::Native => print!("<native fn>"),
         ObjType::String => print!("{}", as_rs_str(value)),
     }
 }

@@ -5,8 +5,13 @@ const TESTS: &'static [(&'static str, &'static str)] = &[
     // ("shadowing.lox", "outer\n"),
     (
         "amigos.lox",
-        "que pasa amig\nque pasa amigo\nque pasa amigoo\n"
-    )
+        "que pasa amig\nque pasa amigo\nque pasa amigoo\n",
+    ),
+    ("functions1.lox", ""),
+    ("functions2.lox", ""),
+    ("functions3.lox", "<fn areWeHavingItYet>\n"),
+    ("functions4.lox", "22\n"),
+    ("functions5.lox", "Do stuff\nnil\n"),
 ];
 
 #[test]

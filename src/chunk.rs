@@ -26,6 +26,7 @@ pub enum OpCode {
     Jump,
     JumpIfFalse,
     Loop,
+    Call,
     Return,
 }
 

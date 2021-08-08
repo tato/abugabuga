@@ -2,7 +2,7 @@ use std::{mem, ptr, slice, str, u8};
 
 use crate::{
     chunk::{add_constant, write_chunk, Chunk, OpCode},
-    object::{copy_string, Obj},
+    object::{copy_string, new_function, Obj, ObjFunction},
     scanner::{init_scanner, scan_token, Token, TokenType},
     value::{number_val, obj_val, Value},
     UINT8_COUNT,
@@ -30,7 +30,7 @@ pub enum Precedence {
     Factor,
     Unary,
     Call,
-    Primary,
+    _Primary,
 }
 
 type ParseFn = unsafe fn(bool);
@@ -48,8 +48,19 @@ pub struct Local {
     pub depth: i32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FunctionType {
+    Function,
+    Script,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Compiler {
+    pub enclosing: *mut Compiler,
+
+    pub function: *mut ObjFunction,
+    pub ty: FunctionType,
+
     pub locals: [Local; UINT8_COUNT],
     pub local_count: i32,
     pub scope_depth: i32,
@@ -74,11 +85,9 @@ pub static mut parser: Parser = Parser {
 };
 #[allow(non_upper_case_globals)]
 pub static mut current: *mut Compiler = ptr::null_mut();
-#[allow(non_upper_case_globals)]
-pub static mut compiling_chunk: *mut Chunk = ptr::null_mut();
 
 unsafe fn current_chunk() -> *mut Chunk {
-    compiling_chunk
+    &mut (*(*current).function).chunk
 }
 
 unsafe fn error_at(token: *mut Token, message: &str) {
@@ -112,11 +121,10 @@ unsafe fn error_at_current(message: &str) {
     error_at(&mut parser.current, message);
 }
 
-pub unsafe fn compile(source: &str, chunk: &mut Chunk) -> bool {
+pub unsafe fn compile(source: &str) -> *mut ObjFunction {
     init_scanner(source);
     let mut compiler: Compiler = mem::zeroed();
-    init_compiler(&mut compiler);
-    compiling_chunk = chunk;
+    init_compiler(&mut compiler, FunctionType::Script);
 
     parser.had_error = false;
     parser.panic_mode = false;
@@ -127,8 +135,12 @@ pub unsafe fn compile(source: &str, chunk: &mut Chunk) -> bool {
         declaration();
     }
 
-    end_compiler();
-    !parser.had_error
+    let function = end_compiler();
+    if parser.had_error {
+        ptr::null_mut()
+    } else {
+        function
+    }
 }
 
 unsafe fn advance() {
@@ -196,6 +208,7 @@ unsafe fn emit_jump(instruction: u8) -> i32 {
 }
 
 unsafe fn emit_return() {
+    emit_byte(OpCode::Nil as u8);
     emit_byte(OpCode::Return as u8);
 }
 
@@ -223,21 +236,46 @@ unsafe fn patch_jump(offset: i32) {
     *(*current_chunk()).code.offset(offset as isize + 1) = (jump & 0xff) as u8;
 }
 
-unsafe fn init_compiler(compiler: *mut Compiler) {
+unsafe fn init_compiler(compiler: *mut Compiler, ty: FunctionType) {
     let compiler = &mut *compiler;
+    compiler.enclosing = current;
+    compiler.function = ptr::null_mut();
+    compiler.ty = ty;
     compiler.local_count = 0;
     compiler.scope_depth = 0;
+    compiler.function = new_function();
     current = compiler;
+
+    if ty != FunctionType::Script {
+        (*(*current).function).name = copy_string(parser.previous.start, parser.previous.length);
+    }
+
+    let local = &mut (*current).locals[(*current).local_count as usize];
+    (*current).local_count += 1;
+    local.depth = 0;
+    local.name.start = "".as_bytes().as_ptr();
+    local.name.length = 0;
 }
 
-unsafe fn end_compiler() {
+unsafe fn end_compiler() -> *mut ObjFunction {
     emit_return();
+    let function = (*current).function;
+
     #[cfg(feature = "debug_print_code")]
     {
         if !parser.had_error {
-            disassemble_chunk(current_chunk(), "code");
+            let name = if (*function).name != ptr::null_mut() {
+                let name = &*(*function.name);
+                str::from_utf8_unchecked(slice::from_raw_parts(name.chars, name.length as usize))
+            } else {
+                "<script>"
+            };
+            disassemble_chunk(current_chunk(), name);
         }
     }
+
+    current = (*current).enclosing;
+    function
 }
 
 unsafe fn begin_scope() {
@@ -273,6 +311,11 @@ unsafe fn binary(_can_assign: bool) {
         TokenType::Slash => emit_byte(OpCode::Divide as u8),
         _ => return, // unreachable
     }
+}
+
+unsafe fn call(_can_assign: bool) {
+    let arg_count = argument_list();
+    emit_bytes(OpCode::Call as u8, arg_count);
 }
 
 unsafe fn literal(_can_assign: bool) {
@@ -369,7 +412,7 @@ static rules: [ParseRule; 40] = unsafe {
             }
         };
     }
-    set_data!(LeftParen, Some(grouping), None, None);
+    set_data!(LeftParen, Some(grouping), Some(call), Call);
     set_data!(RightParen, None, None, None);
     set_data!(LeftBrace, None, None, None);
     set_data!(RightBrace, None, None, None);
@@ -477,7 +520,7 @@ unsafe fn declare_variable() {
     }
 
     let name = &parser.previous;
-    for i in (0..(*current).local_count - 1).rev() {
+    for i in (0..(*current).local_count).rev() {
         let local = &(*current).locals[i as usize];
         if local.depth != -1 && local.depth < (*current).scope_depth {
             break;
@@ -502,6 +545,9 @@ unsafe fn parse_variable(error_message: &str) -> u8 {
 }
 
 unsafe fn mark_initialized() {
+    if (*current).scope_depth == 0 {
+        return;
+    }
     (*current).locals[(*current).local_count as usize - 1].depth = (*current).scope_depth;
 }
 
@@ -512,6 +558,24 @@ unsafe fn define_variable(global: u8) {
     }
 
     emit_bytes(OpCode::DefineGlobal as u8, global);
+}
+
+unsafe fn argument_list() -> u8 {
+    let mut arg_count = 0;
+    if !check(TokenType::RightParen) {
+        loop {
+            expression();
+            if arg_count == 255 {
+                error("Can't have more than 255 arguments.");
+            }
+            arg_count += 1;
+            if !mtch(TokenType::Comma) {
+                break;
+            }
+        }
+    }
+    consume(TokenType::RightParen, "Expect ')' after arguments.");
+    arg_count
 }
 
 unsafe fn and(_can_assign: bool) {
@@ -536,6 +600,44 @@ unsafe fn block() {
         declaration();
     }
     consume(TokenType::RightBrace, "Expect '}' after block.");
+}
+
+unsafe fn function(ty: FunctionType) {
+    let mut compiler: Compiler = mem::zeroed();
+    init_compiler(&mut compiler, ty);
+    begin_scope();
+
+    consume(TokenType::LeftParen, "Expect '(' after function name.");
+    if !check(TokenType::RightParen) {
+        loop {
+            (*(*current).function).arity += 1;
+            if (*(*current).function).arity > 255 {
+                error_at_current("Can't have more than 255 parameters.");
+            }
+            let constant = parse_variable("Expect parameter name");
+            define_variable(constant);
+
+            if !mtch(TokenType::Comma) {
+                break;
+            }
+        }
+    }
+    consume(TokenType::RightParen, "Expect ')' after parameters.");
+    consume(TokenType::LeftBrace, "Expect '{' before function body.");
+    block();
+
+    let function = end_compiler();
+    emit_bytes(
+        OpCode::Constant as u8,
+        make_constant(obj_val(function as *mut Obj)),
+    );
+}
+
+unsafe fn fun_declaration() {
+    let global = parse_variable("Expect function name.");
+    mark_initialized();
+    function(FunctionType::Function);
+    define_variable(global);
 }
 
 unsafe fn var_declaration() {
@@ -631,6 +733,20 @@ unsafe fn print_statement() {
     emit_byte(OpCode::Print as u8);
 }
 
+unsafe fn return_statement() {
+    if (*current).ty == FunctionType::Script {
+        error("Can't return from top-level code.");
+    }
+
+    if mtch(TokenType::Semicolon) {
+        emit_return();
+    } else {
+        expression();
+        consume(TokenType::Semicolon, "Expect ';' after return value.");
+        emit_byte(OpCode::Return as u8);
+    }
+}
+
 unsafe fn while_statement() {
     let loop_start = (*current_chunk()).count;
 
@@ -671,7 +787,9 @@ unsafe fn synchronize() {
 }
 
 unsafe fn declaration() {
-    if mtch(TokenType::Var) {
+    if mtch(TokenType::Fun) {
+        fun_declaration();
+    } else if mtch(TokenType::Var) {
         var_declaration();
     } else {
         statement();
@@ -689,6 +807,8 @@ unsafe fn statement() {
         for_statement();
     } else if mtch(TokenType::If) {
         if_statement();
+    } else if mtch(TokenType::Return) {
+        return_statement();
     } else if mtch(TokenType::While) {
         while_statement();
     } else if mtch(TokenType::LeftBrace) {

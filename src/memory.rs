@@ -1,7 +1,8 @@
 use std::{ffi::c_void, ptr};
 
 use crate::{
-    object::{Obj, ObjString, ObjType},
+    chunk::free_chunk,
+    object::{Obj, ObjFunction, ObjNative, ObjString, ObjType},
     vm::vm,
 };
 
@@ -71,6 +72,14 @@ pub unsafe fn reallocate(pointer: *mut c_void, old_size: usize, new_size: usize)
 
 unsafe fn free_object(object: *mut Obj) {
     match (*object).ty {
+        ObjType::Function => {
+            let function = object as *mut ObjFunction;
+            free_chunk(&mut (*function).chunk);
+            free!(ObjFunction, object);
+        }
+        ObjType::Native => {
+            free!(ObjNative, object);
+        }
         ObjType::String => {
             let string = object as *mut ObjString;
             free_array!(u8, (*string).chars, (*string).length + 1);
