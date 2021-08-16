@@ -2,7 +2,7 @@ use std::{ffi::c_void, ptr};
 
 use crate::{
     chunk::free_chunk,
-    object::{Obj, ObjFunction, ObjNative, ObjString, ObjType},
+    object::{Obj, ObjClosure, ObjFunction, ObjNative, ObjString, ObjType, ObjUpvalue},
     vm::vm,
 };
 
@@ -84,6 +84,18 @@ unsafe fn free_object(object: *mut Obj) {
             let string = object as *mut ObjString;
             free_array!(u8, (*string).chars, (*string).length + 1);
             free!(ObjString, object);
+        }
+        ObjType::Upvalue => {
+            free!(ObjUpvalue, object);
+        }
+        ObjType::Closure => {
+            let closure = object as *mut ObjClosure;
+            free_array!(
+                *mut ObjUpvalue,
+                (*closure).upvalues,
+                (*closure).upvalue_count
+            );
+            free!(ObjClosure, object);
         }
     }
 }

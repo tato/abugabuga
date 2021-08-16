@@ -1,12 +1,16 @@
-use std::{mem, ptr, time::{Duration, SystemTime, UNIX_EPOCH}};
+use std::{
+    mem, ptr,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 use crate::{
     chunk::OpCode,
     compiler::compile,
     memory::free_objects,
     object::{
-        as_function, as_native, as_string, copy_string, is_string, new_native, obj_type,
-        take_string, NativeFn, Obj, ObjFunction, ObjType,
+        as_closure, as_function, as_native, as_string, copy_string, is_string, new_closure,
+        new_native, new_upvalue, obj_type, take_string, NativeFn, Obj, ObjClosure, ObjType,
+        ObjUpvalue,
     },
     table::{free_table, init_table, table_delete, table_get, table_set, Table},
     value::{
@@ -23,7 +27,7 @@ pub const STACK_MAX: usize = FRAMES_MAX * u8::MAX as usize;
 
 #[derive(Clone, Copy)]
 pub struct CallFrame {
-    pub function: *mut ObjFunction,
+    pub closure: *mut ObjClosure,
     pub ip: *mut u8,
     pub slots: *mut Value,
 }
@@ -36,6 +40,7 @@ pub struct VM {
     pub stack_top: *mut Value,
     pub globals: Table,
     pub strings: Table,
+    pub open_upvalues: *mut ObjUpvalue,
     pub objects: *mut Obj,
 }
 
@@ -47,7 +52,7 @@ pub enum InterpretResult {
 }
 
 const ZERO_CALL_FRAME: CallFrame = CallFrame {
-    function: ptr::null_mut(),
+    closure: ptr::null_mut(),
     ip: ptr::null_mut(),
     slots: ptr::null_mut(),
 };
@@ -68,6 +73,7 @@ pub static mut vm: VM = VM {
         capacity: 0,
         entries: ptr::null_mut(),
     },
+    open_upvalues: ptr::null_mut(),
     objects: ptr::null_mut(),
 };
 
@@ -82,12 +88,13 @@ unsafe fn clock_native(_arg_count: i32, _args: *mut Value) -> Value {
 unsafe fn reset_stack() {
     vm.stack_top = vm.stack.as_mut_ptr();
     vm.frame_count = 0;
+    vm.open_upvalues = ptr::null_mut();
 }
 
 unsafe fn _runtime_error() {
     for i in (0..vm.frame_count).rev() {
         let frame = &mut vm.frames[i as usize];
-        let function = frame.function;
+        let function = (*frame.closure).function;
         let instruction = frame.ip.sub((*function).chunk.code as usize).sub(1) as usize;
         eprint!("[line {}] in ", *(*function).chunk.lines.add(instruction));
         if (*function).name == ptr::null() {
@@ -103,11 +110,6 @@ unsafe fn _runtime_error() {
             );
         }
     }
-
-    let frame = &vm.frames[vm.frame_count as usize - 1];
-    let instruction = frame.ip.sub((*frame.function).chunk.code.sub(1) as usize);
-    let line = *(*frame.function).chunk.lines.offset(instruction as isize);
-    eprintln!("[line {}] in script", line);
 }
 
 macro_rules! runtime_error {
@@ -148,7 +150,10 @@ pub unsafe fn interpret(source: &str) -> InterpretResult {
     }
 
     push(obj_val(function as *mut Obj));
-    call(function, 0);
+    let closure = new_closure(function);
+    pop();
+    push(obj_val(closure as *mut Obj));
+    call(closure, 0);
 
     let result = run();
 
@@ -169,11 +174,11 @@ unsafe fn peek(distance: isize) -> Value {
     *vm.stack_top.offset(-1 - distance)
 }
 
-unsafe fn call(function: *mut ObjFunction, arg_count: i32) -> bool {
-    if arg_count != (*function).arity {
+unsafe fn call(closure: *mut ObjClosure, arg_count: i32) -> bool {
+    if arg_count != (*(*closure).function).arity {
         runtime_error!(
             "Expected {} arguments but got {}.",
-            (*function).arity,
+            (*(*closure).function).arity,
             arg_count
         );
         return false;
@@ -186,8 +191,8 @@ unsafe fn call(function: *mut ObjFunction, arg_count: i32) -> bool {
 
     let frame = &mut vm.frames[vm.frame_count as usize];
     vm.frame_count += 1;
-    frame.function = function;
-    frame.ip = (*function).chunk.code;
+    frame.closure = closure;
+    frame.ip = (*(*closure).function).chunk.code;
     frame.slots = vm.stack_top.sub(arg_count as usize).sub(1);
     true
 }
@@ -195,7 +200,7 @@ unsafe fn call(function: *mut ObjFunction, arg_count: i32) -> bool {
 unsafe fn call_value(callee: Value, arg_count: i32) -> bool {
     if is_obj(callee) {
         match obj_type(callee) {
-            ObjType::Function => return call(as_function(callee), arg_count),
+            ObjType::Closure => return call(as_closure(callee), arg_count),
             ObjType::Native => {
                 let native = as_native(callee);
                 let result = (native)(arg_count, vm.stack_top.sub(arg_count as usize));
@@ -208,6 +213,38 @@ unsafe fn call_value(callee: Value, arg_count: i32) -> bool {
     }
     runtime_error!("Can only call functions and classes.");
     false
+}
+
+unsafe fn capture_upvalue(local: *mut Value) -> *mut ObjUpvalue {
+    let mut prev_upvalue = ptr::null_mut();
+    let mut upvalue = vm.open_upvalues;
+    while upvalue != ptr::null_mut() && (*upvalue).location > local {
+        prev_upvalue = upvalue;
+        upvalue = (*upvalue).next;
+    }
+    if upvalue != ptr::null_mut() && (*upvalue).location == local {
+        return upvalue;
+    }
+
+    let created_upvalue = new_upvalue(local);
+    (*created_upvalue).next = upvalue;
+
+    if prev_upvalue == ptr::null_mut() {
+        vm.open_upvalues = created_upvalue;
+    } else {
+        (*prev_upvalue).next = created_upvalue;
+    }
+
+    return created_upvalue;
+}
+
+unsafe fn close_upvalues(last: *mut Value) {
+    while vm.open_upvalues != ptr::null_mut() && (*vm.open_upvalues).location >= last {
+        let upvalue = vm.open_upvalues;
+        (*upvalue).closed = *(*upvalue).location;
+        (*upvalue).location = &mut (*upvalue).closed;
+        vm.open_upvalues = (*upvalue).next;
+    }
 }
 
 unsafe fn is_falsey(value: Value) -> bool {
@@ -246,7 +283,7 @@ unsafe fn run() -> InterpretResult {
     }
     macro_rules! read_constant {
         () => {
-            *(*frame.function)
+            *(*(*frame.closure).function)
                 .chunk
                 .constants
                 .values
@@ -283,8 +320,10 @@ unsafe fn run() -> InterpretResult {
             }
             println!("");
             disassemble_instruction(
-                &mut (*frame.function).chunk,
-                frame.ip.sub((*frame.function).chunk.code as usize) as i32,
+                &mut (*(*frame.closure).function).chunk,
+                frame
+                    .ip
+                    .sub((*(*frame.closure).function).chunk.code as usize) as i32,
             );
         }
 
@@ -343,6 +382,14 @@ unsafe fn run() -> InterpretResult {
                     return InterpretResult::RuntimeError;
                 }
             }
+            i if i == OpCode::GetUpvalue as u8 => {
+                let slot = read_byte!();
+                push(*(**(*(*frame).closure).upvalues.offset(slot as isize)).location);
+            }
+            i if i == OpCode::SetUpvalue as u8 => {
+                let slot = read_byte!();
+                *(**(*(*frame).closure).upvalues.offset(slot as isize)).location = peek(0);
+            }
             i if i == OpCode::Equal as u8 => {
                 let b = pop();
                 let a = pop();
@@ -398,8 +445,29 @@ unsafe fn run() -> InterpretResult {
                 }
                 frame = &mut vm.frames[vm.frame_count as usize - 1];
             }
+            i if i == OpCode::Closure as u8 => {
+                let function = as_function(read_constant!());
+                let closure = new_closure(function);
+                push(obj_val(closure as *mut Obj));
+                for i in 0..(*closure).upvalue_count {
+                    let is_local = read_byte!();
+                    let index = read_byte!();
+                    if is_local == 1 {
+                        *(*closure).upvalues.offset(i as isize) =
+                            capture_upvalue((*frame).slots.offset(index as isize));
+                    } else {
+                        *(*closure).upvalues.offset(i as isize) =
+                            *(*(*frame).closure).upvalues.offset(index as isize);
+                    }
+                }
+            }
+            i if i == OpCode::CloseUpvalue as u8 => {
+                close_upvalues(vm.stack_top.sub(1));
+                pop();
+            }
             i if i == OpCode::Return as u8 => {
                 let result = pop();
+                close_upvalues((*frame).slots);
                 vm.frame_count -= 1;
                 if vm.frame_count == 0 {
                     pop();

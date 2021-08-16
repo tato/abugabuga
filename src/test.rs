@@ -12,6 +12,14 @@ const TESTS: &'static [(&'static str, &'static str)] = &[
     ("functions3.lox", "<fn areWeHavingItYet>\n"),
     ("functions4.lox", "22\n"),
     ("functions5.lox", "Do stuff\nnil\n"),
+    ("upvalue1.lox", "1\n"),
+    ("upvalue2.lox", "1\n"),
+    (
+        "upvalue3.lox",
+        "return from outer\ncreate inner closure\nvalue\n",
+    ),
+    ("upvalue4.lox", "outside\n"),
+    ("upvalue5.lox", "updated\n"),
 ];
 
 #[test]

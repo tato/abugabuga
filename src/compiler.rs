@@ -46,6 +46,13 @@ pub struct ParseRule {
 pub struct Local {
     pub name: Token,
     pub depth: i32,
+    pub is_captured: bool,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Upvalue {
+    pub index: u8,
+    pub is_local: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -63,6 +70,7 @@ pub struct Compiler {
 
     pub locals: [Local; UINT8_COUNT],
     pub local_count: i32,
+    pub upvalues: [Upvalue; UINT8_COUNT],
     pub scope_depth: i32,
 }
 
@@ -255,6 +263,7 @@ unsafe fn init_compiler(compiler: *mut Compiler, ty: FunctionType) {
     local.depth = 0;
     local.name.start = "".as_bytes().as_ptr();
     local.name.length = 0;
+    local.is_captured = false;
 }
 
 unsafe fn end_compiler() -> *mut ObjFunction {
@@ -265,7 +274,7 @@ unsafe fn end_compiler() -> *mut ObjFunction {
     {
         if !parser.had_error {
             let name = if (*function).name != ptr::null_mut() {
-                let name = &*(*function.name);
+                let name = &*(*function).name;
                 str::from_utf8_unchecked(slice::from_raw_parts(name.chars, name.length as usize))
             } else {
                 "<script>"
@@ -286,10 +295,14 @@ unsafe fn end_scope() {
     (*current).scope_depth -= 1;
 
     while (*current).local_count > 0
-        && (*current).locals[(*current).local_count as usize].depth > (*current).scope_depth
+        && (*current).locals[(*current).local_count as usize - 1].depth > (*current).scope_depth
     {
-        emit_byte(OpCode::Pop as u8);
-        (*current).local_count;
+        if (*current).locals[(*current).local_count as usize - 1].is_captured {
+            emit_byte(OpCode::CloseUpvalue as u8)
+        } else {
+            emit_byte(OpCode::Pop as u8);
+        }
+        (*current).local_count -= 1;
     }
 }
 
@@ -365,6 +378,13 @@ unsafe fn named_variable(name: Token, can_assign: bool) {
     if arg != -1 {
         get_op = OpCode::GetLocal;
         set_op = OpCode::SetLocal;
+    } else if {
+        arg = resolve_upvalue(current, &name);
+        arg
+    } != -1
+    {
+        get_op = OpCode::GetUpvalue;
+        set_op = OpCode::SetUpvalue;
     } else {
         arg = identifier_constant(&name).into();
         get_op = OpCode::GetGlobal;
@@ -502,6 +522,46 @@ unsafe fn resolve_local(compiler: *mut Compiler, name: &Token) -> i32 {
     return -1;
 }
 
+unsafe fn add_upvalue(compiler: *mut Compiler, index: u8, is_local: bool) -> i32 {
+    let upvalue_count = (*(*compiler).function).upvalue_count;
+
+    for i in 0..upvalue_count {
+        let upvalue = &(*compiler).upvalues[i as usize];
+        if upvalue.index == index && upvalue.is_local == is_local {
+            return i;
+        }
+    }
+
+    if upvalue_count as usize == UINT8_COUNT {
+        error("Too many closure variables in function.");
+        return 0;
+    }
+
+    (*compiler).upvalues[upvalue_count as usize].is_local = is_local;
+    (*compiler).upvalues[upvalue_count as usize].index = index;
+    let res = (*(*compiler).function).upvalue_count;
+    (*(*compiler).function).upvalue_count += 1;
+    res
+}
+
+unsafe fn resolve_upvalue(compiler: *mut Compiler, name: &Token) -> i32 {
+    if (*compiler).enclosing == ptr::null_mut() {
+        return -1;
+    }
+    let local = resolve_local((*compiler).enclosing, name);
+    if local != -1 {
+        (*(*compiler).enclosing).locals[local as usize].is_captured = true;
+        return add_upvalue(compiler, local as u8, true);
+    }
+
+    let upvalue = resolve_upvalue((*compiler).enclosing, name);
+    if upvalue != -1 {
+        return add_upvalue(compiler, upvalue as u8, false);
+    }
+
+    -1
+}
+
 unsafe fn add_local(name: Token) {
     if (*current).local_count as usize == UINT8_COUNT {
         error("Too many local variables in scope.");
@@ -512,6 +572,7 @@ unsafe fn add_local(name: Token) {
     (*current).local_count += 1;
     local.name = name;
     local.depth = -1;
+    local.is_captured = false;
 }
 
 unsafe fn declare_variable() {
@@ -628,9 +689,18 @@ unsafe fn function(ty: FunctionType) {
 
     let function = end_compiler();
     emit_bytes(
-        OpCode::Constant as u8,
+        OpCode::Closure as u8,
         make_constant(obj_val(function as *mut Obj)),
     );
+
+    for i in 0..(*function).upvalue_count {
+        emit_byte(if compiler.upvalues[i as usize].is_local {
+            1
+        } else {
+            0
+        });
+        emit_byte(compiler.upvalues[i as usize].index);
+    }
 }
 
 unsafe fn fun_declaration() {

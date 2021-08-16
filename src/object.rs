@@ -63,6 +63,10 @@ pub unsafe fn is_string(value: Value) -> bool {
     is_obj_type(value, ObjType::String)
 }
 
+pub unsafe fn _is_closure(value: Value) -> bool {
+    is_obj_type(value, ObjType::Closure)
+}
+
 pub unsafe fn as_function(value: Value) -> *mut ObjFunction {
     as_obj(value) as *mut ObjFunction
 }
@@ -73,6 +77,10 @@ pub unsafe fn as_native(value: Value) -> NativeFn {
 
 pub unsafe fn as_string(value: Value) -> *mut ObjString {
     as_obj(value) as *mut ObjString
+}
+
+pub unsafe fn as_closure(value: Value) -> *mut ObjClosure {
+    as_obj(value) as *mut ObjClosure
 }
 
 pub unsafe fn as_rs_str(value: Value) -> &'static str {
@@ -89,6 +97,8 @@ pub enum ObjType {
     Function,
     Native,
     String,
+    Upvalue,
+    Closure,
 }
 
 #[repr(C)]
@@ -101,12 +111,14 @@ pub struct Obj {
 pub struct ObjFunction {
     pub obj: Obj,
     pub arity: i32,
+    pub upvalue_count: i32,
     pub chunk: Chunk,
     pub name: *const ObjString,
 }
 
 pub type NativeFn = unsafe fn(i32, *mut Value) -> Value;
 
+#[repr(C)]
 pub struct ObjNative {
     pub obj: Obj,
     pub function: NativeFn,
@@ -120,9 +132,40 @@ pub struct ObjString {
     pub hash: u32,
 }
 
+#[repr(C)]
+pub struct ObjUpvalue {
+    pub obj: Obj,
+    pub location: *mut Value,
+    pub closed: Value,
+    pub next: *mut ObjUpvalue,
+}
+
+#[repr(C)]
+pub struct ObjClosure {
+    pub obj: Obj,
+    pub function: *mut ObjFunction,
+    pub upvalues: *mut *mut ObjUpvalue,
+    pub upvalue_count: i32,
+}
+
+pub unsafe fn new_closure(function: *mut ObjFunction) -> *mut ObjClosure {
+    let upvalues = allocate!(*mut ObjUpvalue, (*function).upvalue_count);
+    for i in 0..(*function).upvalue_count {
+        *upvalues.offset(i as isize) = ptr::null_mut();
+    }
+
+    let closure = allocate_obj!(ObjClosure, ObjType::Closure);
+    (*closure).function = function;
+    (*closure).upvalues = upvalues;
+    (*closure).upvalue_count = (*function).upvalue_count;
+
+    closure
+}
+
 pub unsafe fn new_function() -> *mut ObjFunction {
     let function = allocate_obj!(ObjFunction, ObjType::Function);
     (*function).arity = 0;
+    (*function).upvalue_count = 0;
     (*function).name = ptr::null_mut();
     init_chunk(&mut (*function).chunk);
     function
@@ -156,6 +199,14 @@ pub unsafe fn copy_string(chars: *const u8, length: i32) -> *mut ObjString {
     allocate_string(heap_chars, length, hash)
 }
 
+pub unsafe fn new_upvalue(slot: *mut Value) -> *mut ObjUpvalue {
+    let upvalue = allocate_obj!(ObjUpvalue, ObjType::Upvalue);
+    (*upvalue).location = slot;
+    (*upvalue).closed = nil_val();
+    (*upvalue).next = ptr::null_mut();
+    upvalue
+}
+
 unsafe fn print_function(function: *mut ObjFunction) {
     if (*function).name == ptr::null_mut() {
         print!("<script>");
@@ -174,5 +225,7 @@ pub unsafe fn print_object(value: Value) {
         ObjType::Function => print_function(as_function(value)),
         ObjType::Native => print!("<native fn>"),
         ObjType::String => print!("{}", as_rs_str(value)),
+        ObjType::Upvalue => print!("upvalue"),
+        ObjType::Closure => print_function((*as_closure(value)).function),
     }
 }

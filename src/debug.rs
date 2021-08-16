@@ -2,6 +2,7 @@ use std::usize;
 
 use crate::{
     chunk::{Chunk, OpCode},
+    object::as_function,
     value::print_value,
 };
 
@@ -15,7 +16,7 @@ pub unsafe fn disassemble_chunk(chunk: *mut Chunk, name: &str) {
     }
 }
 
-pub unsafe fn disassemble_instruction(chunk: *mut Chunk, offset: i32) -> i32 {
+pub unsafe fn disassemble_instruction(chunk: *mut Chunk, mut offset: i32) -> i32 {
     print!("{:04} ", offset);
 
     let chunk = &mut *chunk;
@@ -42,6 +43,8 @@ pub unsafe fn disassemble_instruction(chunk: *mut Chunk, offset: i32) -> i32 {
             constant_instruction("OP_DEFINE_GLOBAL", chunk, offset)
         }
         i if i == OpCode::SetGlobal as u8 => constant_instruction("OP_SET_GLOBAL", chunk, offset),
+        i if i == OpCode::GetUpvalue as u8 => byte_instruction("OP_GET_UPVALUE", chunk, offset),
+        i if i == OpCode::SetUpvalue as u8 => byte_instruction("OP_SET_UPVALUE", chunk, offset),
         i if i == OpCode::Equal as u8 => simple_instruction("OP_EQUAL", offset),
         i if i == OpCode::Greater as u8 => simple_instruction("OP_GREATER", offset),
         i if i == OpCode::Less as u8 => simple_instruction("OP_LESS", offset),
@@ -58,6 +61,31 @@ pub unsafe fn disassemble_instruction(chunk: *mut Chunk, offset: i32) -> i32 {
         i if i == OpCode::Loop as u8 => jump_instruction("OP_LOOP", -1, chunk, offset),
         i if i == OpCode::Print as u8 => simple_instruction("OP_PRINT", offset),
         i if i == OpCode::Call as u8 => byte_instruction("OP_CALL", chunk, offset),
+        i if i == OpCode::Closure as u8 => {
+            offset += 1;
+            let constant = *(*chunk).code.offset(offset as isize);
+            offset += 1;
+            print!("{:-16} {:4} ", "OP_CLOSURE", constant);
+            print_value(*(*chunk).constants.values.offset(constant as isize));
+            println!();
+
+            let function = as_function(*(*chunk).constants.values.offset(constant as isize));
+            for _j in 0..(*function).upvalue_count {
+                let is_local = *(*chunk).code.offset(offset as isize);
+                offset += 1;
+                let index = *(*chunk).code.offset(offset as isize);
+                offset += 1;
+                println!(
+                    "{:04}      |                     {} {}",
+                    offset - 2,
+                    if is_local == 1 { "local" } else { "upvalue" },
+                    index
+                );
+            }
+
+            offset
+        }
+        i if i == OpCode::CloseUpvalue as u8 => simple_instruction("OP_CLOSE_UPVALUE", offset),
         i if i == OpCode::Return as u8 => simple_instruction("OP_RETURN", offset),
         _ => {
             println!("Unknown opcode {}", instruction);
@@ -87,8 +115,13 @@ unsafe fn byte_instruction(name: &str, chunk: *mut Chunk, offset: i32) -> i32 {
 }
 
 unsafe fn jump_instruction(name: &str, sign: i32, chunk: *mut Chunk, offset: i32) -> i32 {
-    let jump = (*vm.ip.offset(offset as isize + 1) as u16) << 8
-        | *vm.ip.offset(offset as isize + 2) as u16;
-    println!("{:-16} {:4} -> {}", name, offset, offset + 3 + sign * jump);
+    let jump = (*(*chunk).code.offset(offset as isize + 1) as u16) << 8
+        | *(*chunk).code.offset(offset as isize + 2) as u16;
+    println!(
+        "{:-16} {:4} -> {}",
+        name,
+        offset,
+        offset + 3 + sign * jump as i32
+    );
     offset + 3
 }

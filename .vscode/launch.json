@@ -8,8 +8,8 @@
             "type": "lldb",
             "request": "launch",
             "name": "Debug",
-            "program": "${workspaceFolder}/<your program>",
-            "args": [],
+            "program": "${workspaceFolder}/target/debug/abugabuga",
+            "args": ["test.lox"],
             "cwd": "${workspaceFolder}"
         }
     ]
