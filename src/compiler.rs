@@ -2,6 +2,7 @@ use std::{mem, ptr, slice, str, u8};
 
 use crate::{
     chunk::{add_constant, write_chunk, Chunk, OpCode},
+    memory::mark_object,
     object::{copy_string, new_function, Obj, ObjFunction},
     scanner::{init_scanner, scan_token, Token, TokenType},
     value::{number_val, obj_val, Value},
@@ -148,6 +149,14 @@ pub unsafe fn compile(source: &str) -> *mut ObjFunction {
         ptr::null_mut()
     } else {
         function
+    }
+}
+
+pub unsafe fn mark_compiler_roots() {
+    let mut compiler = current;
+    while compiler != ptr::null_mut() {
+        mark_object((*compiler).function as *mut Obj);
+        compiler = (*compiler).enclosing;
     }
 }
 

@@ -41,7 +41,10 @@ pub struct VM {
     pub globals: Table,
     pub strings: Table,
     pub open_upvalues: *mut ObjUpvalue,
+    pub bytes_allocated: usize,
+    pub next_gc: usize,
     pub objects: *mut Obj,
+    pub gray_stack: Vec<*mut Obj>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,7 +77,10 @@ pub static mut vm: VM = VM {
         entries: ptr::null_mut(),
     },
     open_upvalues: ptr::null_mut(),
+    bytes_allocated: 0,
+    next_gc: 0,
     objects: ptr::null_mut(),
+    gray_stack: vec![],
 };
 
 unsafe fn clock_native(_arg_count: i32, _args: *mut Value) -> Value {
@@ -97,7 +103,7 @@ unsafe fn _runtime_error() {
         let function = (*frame.closure).function;
         let instruction = frame.ip.sub((*function).chunk.code as usize).sub(1) as usize;
         eprint!("[line {}] in ", *(*function).chunk.lines.add(instruction));
-        if (*function).name == ptr::null() {
+        if (*function).name == ptr::null_mut() {
             eprintln!("script");
         } else {
             let name = &*(*function).name;
@@ -131,6 +137,12 @@ unsafe fn define_native(name: &str, function: NativeFn) {
 
 pub unsafe fn init_vm() {
     reset_stack();
+    vm.objects = ptr::null_mut();
+    vm.bytes_allocated = 0;
+    vm.next_gc = 1024 * 1024;
+
+    vm.gray_stack = vec![];
+
     init_table(&mut vm.globals);
     init_table(&mut vm.strings);
 
@@ -252,8 +264,8 @@ unsafe fn is_falsey(value: Value) -> bool {
 }
 
 unsafe fn concatenate() {
-    let b = &*as_string(pop());
-    let a = &*as_string(pop());
+    let b = &*as_string(peek(0));
+    let a = &*as_string(peek(1));
 
     let length = a.length + b.length;
     let chars = allocate!(u8, length + 1);
@@ -262,6 +274,8 @@ unsafe fn concatenate() {
     *chars.offset(length as isize) = 0;
 
     let result = take_string(chars, length);
+    pop();
+    pop();
     push(obj_val(mem::transmute(result)));
 }
 

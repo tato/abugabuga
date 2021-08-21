@@ -1,6 +1,9 @@
 use std::ptr;
 
-use crate::value::{free_value_array, init_value_array, write_value_array, Value, ValueArray};
+use crate::{
+    value::{free_value_array, init_value_array, write_value_array, Value, ValueArray},
+    vm::{pop, push},
+};
 
 pub enum OpCode {
     Constant,
@@ -77,7 +80,9 @@ pub unsafe fn write_chunk(chunk: *mut Chunk, byte: u8, line: i32) {
 }
 
 pub unsafe fn add_constant(chunk: *mut Chunk, value: Value) -> i32 {
+    push(value);
     let chunk = &mut *chunk;
     write_value_array(&mut chunk.constants, value);
+    pop();
     chunk.constants.count - 1
 }

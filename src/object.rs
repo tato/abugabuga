@@ -4,8 +4,8 @@ use crate::{
     chunk::{init_chunk, Chunk},
     memory::reallocate,
     table::{table_find_string, table_set},
-    value::{as_obj, is_obj, nil_val, Value},
-    vm::vm,
+    value::{as_obj, is_obj, nil_val, obj_val, Value},
+    vm::{pop, push, vm},
 };
 
 macro_rules! allocate_obj {
@@ -15,26 +15,28 @@ macro_rules! allocate_obj {
 }
 
 unsafe fn allocate_object(size: usize, ty: ObjType) -> *mut Obj {
-    let obj = reallocate(ptr::null_mut(), 0, size) as *mut Obj;
-    {
-        let obj = &mut *obj;
-        obj.ty = ty;
+    let object = reallocate(ptr::null_mut(), 0, size) as *mut Obj;
+    (*object).ty = ty;
+    (*object).is_marked = false;
+    (*object).next = vm.objects;
 
-        obj.next = vm.objects;
-        vm.objects = obj;
+    #[cfg(feature = "debug_log_gc")]
+    {
+        println!("{:?} allocate {} for {:?}", object, size, ty);
     }
-    obj
+
+    vm.objects = object;
+    object
 }
 
 unsafe fn allocate_string(chars: *mut u8, length: i32, hash: u32) -> *mut ObjString {
     let string = allocate_obj!(ObjString, ObjType::String);
-    {
-        let string = &mut *string;
-        string.length = length;
-        string.chars = chars;
-        string.hash = hash;
-        table_set(&mut vm.strings, string, nil_val());
-    }
+    (*string).length = length;
+    (*string).chars = chars;
+    (*string).hash = hash;
+    push(obj_val(string as *mut Obj));
+    table_set(&mut vm.strings, string, nil_val());
+    pop();
     string
 }
 
@@ -92,7 +94,7 @@ unsafe fn is_obj_type(value: Value, ty: ObjType) -> bool {
     is_obj(value) && (*as_obj(value)).ty == ty
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ObjType {
     Function,
     Native,
@@ -104,6 +106,7 @@ pub enum ObjType {
 #[repr(C)]
 pub struct Obj {
     pub ty: ObjType,
+    pub is_marked: bool,
     pub next: *mut Obj,
 }
 
@@ -113,7 +116,7 @@ pub struct ObjFunction {
     pub arity: i32,
     pub upvalue_count: i32,
     pub chunk: Chunk,
-    pub name: *const ObjString,
+    pub name: *mut ObjString,
 }
 
 pub type NativeFn = unsafe fn(i32, *mut Value) -> Value;
