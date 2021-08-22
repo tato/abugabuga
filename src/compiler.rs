@@ -340,6 +340,18 @@ unsafe fn call(_can_assign: bool) {
     emit_bytes(OpCode::Call as u8, arg_count);
 }
 
+unsafe fn dot(can_assign: bool) {
+    consume(TokenType::Identifier, "Expect property name after '.'.");
+    let name = identifier_constant(&parser.previous);
+
+    if can_assign && mtch(TokenType::Equal) {
+        expression();
+        emit_bytes(OpCode::SetProperty as u8, name);
+    } else {
+        emit_bytes(OpCode::GetProperty as u8, name);
+    }
+}
+
 unsafe fn literal(_can_assign: bool) {
     match parser.previous.ty {
         TokenType::False => emit_byte(OpCode::False as u8),
@@ -446,7 +458,7 @@ static rules: [ParseRule; 40] = unsafe {
     set_data!(LeftBrace, None, None, None);
     set_data!(RightBrace, None, None, None);
     set_data!(Comma, None, None, None);
-    set_data!(Dot, None, None, None);
+    set_data!(Dot, None, Some(dot), Call);
     set_data!(Minus, Some(unary), Some(binary), Term);
     set_data!(Plus, None, Some(binary), Term);
     set_data!(Semicolon, None, None, None);
@@ -712,6 +724,18 @@ unsafe fn function(ty: FunctionType) {
     }
 }
 
+unsafe fn class_declaration() {
+    consume(TokenType::Identifier, "Expect class name.");
+    let name_constant = identifier_constant(&parser.previous);
+    declare_variable();
+
+    emit_bytes(OpCode::Class as u8, name_constant);
+    define_variable(name_constant);
+
+    consume(TokenType::LeftBrace, "Expect '{' before class body.");
+    consume(TokenType::RightBrace, "Expect '}' after class body.");
+}
+
 unsafe fn fun_declaration() {
     let global = parse_variable("Expect function name.");
     mark_initialized();
@@ -866,7 +890,9 @@ unsafe fn synchronize() {
 }
 
 unsafe fn declaration() {
-    if mtch(TokenType::Fun) {
+    if mtch(TokenType::Class) {
+        class_declaration();
+    } else if mtch(TokenType::Fun) {
         fun_declaration();
     } else if mtch(TokenType::Var) {
         var_declaration();

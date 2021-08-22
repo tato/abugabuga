@@ -8,9 +8,9 @@ use crate::{
     compiler::compile,
     memory::free_objects,
     object::{
-        as_closure, as_function, as_native, as_string, copy_string, is_string, new_closure,
-        new_native, new_upvalue, obj_type, take_string, NativeFn, Obj, ObjClosure, ObjType,
-        ObjUpvalue,
+        as_class, as_closure, as_function, as_instance, as_native, as_string, copy_string,
+        is_instance, is_string, new_class, new_closure, new_instance, new_native, new_upvalue,
+        obj_type, take_string, NativeFn, Obj, ObjClosure, ObjType, ObjUpvalue,
     },
     table::{free_table, init_table, table_delete, table_get, table_set, Table},
     value::{
@@ -212,6 +212,12 @@ unsafe fn call(closure: *mut ObjClosure, arg_count: i32) -> bool {
 unsafe fn call_value(callee: Value, arg_count: i32) -> bool {
     if is_obj(callee) {
         match obj_type(callee) {
+            ObjType::Class => {
+                let class = as_class(callee);
+                *vm.stack_top.offset(-arg_count as isize - 1) =
+                    obj_val(new_instance(class) as *mut Obj);
+                return true;
+            }
             ObjType::Closure => return call(as_closure(callee), arg_count),
             ObjType::Native => {
                 let native = as_native(callee);
@@ -404,6 +410,36 @@ unsafe fn run() -> InterpretResult {
                 let slot = read_byte!();
                 *(**(*(*frame).closure).upvalues.offset(slot as isize)).location = peek(0);
             }
+            i if i == OpCode::GetProperty as u8 => {
+                if !is_instance(peek(0)) {
+                    runtime_error!("Only instances have properties.");
+                    return InterpretResult::RuntimeError;
+                }
+
+                let instance = as_instance(peek(0));
+                let name = read_string!();
+
+                let mut value = nil_val();
+                if table_get(&mut (*instance).fields, name, &mut value) {
+                    pop();
+                    push(value);
+                } else {
+                    runtime_error!("Undefined property '{}'.", "name->chars");
+                    return InterpretResult::RuntimeError;
+                }
+            }
+            i if i == OpCode::SetProperty as u8 => {
+                if !is_instance(peek(1)) {
+                    runtime_error!("Only instances have fields.");
+                    return InterpretResult::RuntimeError;
+                }
+
+                let instance = as_instance(peek(1));
+                table_set(&mut (*instance).fields, read_string!(), peek(0));
+                let value = pop();
+                pop();
+                push(value);
+            }
             i if i == OpCode::Equal as u8 => {
                 let b = pop();
                 let a = pop();
@@ -490,6 +526,9 @@ unsafe fn run() -> InterpretResult {
                 vm.stack_top = frame.slots;
                 push(result);
                 frame = &mut vm.frames[vm.frame_count as usize - 1];
+            }
+            i if i == OpCode::Class as u8 => {
+                push(obj_val(new_class(read_string!()) as *mut Obj));
             }
             _ => break,
         }

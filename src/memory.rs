@@ -3,14 +3,17 @@ use std::{ffi::c_void, ptr};
 use crate::{
     chunk::free_chunk,
     compiler::mark_compiler_roots,
-    object::{Obj, ObjClosure, ObjFunction, ObjNative, ObjString, ObjType, ObjUpvalue},
-    table::{mark_table, table_remove_white},
+    object::{
+        Obj, ObjClass, ObjClosure, ObjFunction, ObjInstance, ObjNative, ObjString, ObjType,
+        ObjUpvalue,
+    },
+    table::{free_table, mark_table, table_remove_white},
     value::{as_obj, is_obj, Value, ValueArray},
     vm::vm,
 };
 
 #[cfg(feature = "debug_log_gc")]
-use crate::value::{obj_val, print_value}; 
+use crate::value::{obj_val, print_value};
 
 macro_rules! allocate {
     ($t:ty, $count:expr) => {
@@ -70,7 +73,6 @@ pub unsafe fn reallocate(pointer: *mut c_void, old_size: usize, new_size: usize)
     } else {
         vm.bytes_allocated -= old_size - new_size;
     }
-    
 
     if new_size > old_size {
         #[cfg(feature = "debug_stress_gc")]
@@ -149,6 +151,15 @@ unsafe fn blacken_object(object: *mut Obj) {
             mark_array(&mut (*function).chunk.constants);
         }
         ObjType::Upvalue => mark_value((*(object as *mut ObjUpvalue)).closed),
+        ObjType::Class => {
+            let class = object as *mut ObjClass;
+            mark_object((*class).name as *mut Obj);
+        }
+        ObjType::Instance => {
+            let instance = object as *mut ObjInstance;
+            mark_object((*instance).class as *mut Obj);
+            mark_table(&mut (*instance).fields);
+        }
         ObjType::Native | ObjType::String => {}
     }
 }
@@ -184,6 +195,14 @@ unsafe fn free_object(object: *mut Obj) {
                 (*closure).upvalue_count
             );
             free!(ObjClosure, object);
+        }
+        ObjType::Class => {
+            free!(ObjClass, object);
+        }
+        ObjType::Instance => {
+            let instance = object as *mut ObjInstance;
+            free_table(&mut (*instance).fields);
+            free!(ObjInstance, object);
         }
     }
 }

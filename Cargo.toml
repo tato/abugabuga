@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2018"
 
 [features]
-default = ["debug_stress_gc", "debug_log_gc"]
+default = []
 debug_trace_execution = []
 debug_print_code = []
 debug_stress_gc = []

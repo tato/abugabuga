@@ -1,7 +1,6 @@
-for (var i = 0; i < 3; i = i + 1) {
-  var os = "";
-  for (var j = 0; j < i; j = j + 1) {
-    os = os + "o";
-  }
-  print "que pasa amig" + os;
-}
+class Pair {}
+
+var pair = Pair();
+pair.first = 1;
+pair.second = 2;
+print pair.first + pair.second; // 3.

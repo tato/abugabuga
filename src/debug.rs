@@ -45,6 +45,12 @@ pub unsafe fn disassemble_instruction(chunk: *mut Chunk, mut offset: i32) -> i32
         i if i == OpCode::SetGlobal as u8 => constant_instruction("OP_SET_GLOBAL", chunk, offset),
         i if i == OpCode::GetUpvalue as u8 => byte_instruction("OP_GET_UPVALUE", chunk, offset),
         i if i == OpCode::SetUpvalue as u8 => byte_instruction("OP_SET_UPVALUE", chunk, offset),
+        i if i == OpCode::GetProperty as u8 => {
+            constant_instruction("OP_GET_PROPERTY", chunk, offset)
+        }
+        i if i == OpCode::SetProperty as u8 => {
+            constant_instruction("OP_SET_PROPERTY", chunk, offset)
+        }
         i if i == OpCode::Equal as u8 => simple_instruction("OP_EQUAL", offset),
         i if i == OpCode::Greater as u8 => simple_instruction("OP_GREATER", offset),
         i if i == OpCode::Less as u8 => simple_instruction("OP_LESS", offset),
@@ -87,6 +93,7 @@ pub unsafe fn disassemble_instruction(chunk: *mut Chunk, mut offset: i32) -> i32
         }
         i if i == OpCode::CloseUpvalue as u8 => simple_instruction("OP_CLOSE_UPVALUE", offset),
         i if i == OpCode::Return as u8 => simple_instruction("OP_RETURN", offset),
+        i if i == OpCode::Class as u8 => constant_instruction("OP_CLASS", chunk, offset),
         _ => {
             println!("Unknown opcode {}", instruction);
             offset + 1

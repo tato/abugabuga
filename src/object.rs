@@ -3,7 +3,7 @@ use std::{ptr, slice, str};
 use crate::{
     chunk::{init_chunk, Chunk},
     memory::reallocate,
-    table::{table_find_string, table_set},
+    table::{init_table, table_find_string, table_set, Table},
     value::{as_obj, is_obj, nil_val, obj_val, Value},
     vm::{pop, push, vm},
 };
@@ -69,6 +69,14 @@ pub unsafe fn _is_closure(value: Value) -> bool {
     is_obj_type(value, ObjType::Closure)
 }
 
+pub unsafe fn _is_class(value: Value) -> bool {
+    is_obj_type(value, ObjType::Class)
+}
+
+pub unsafe fn is_instance(value: Value) -> bool {
+    is_obj_type(value, ObjType::Instance)
+}
+
 pub unsafe fn as_function(value: Value) -> *mut ObjFunction {
     as_obj(value) as *mut ObjFunction
 }
@@ -83,6 +91,14 @@ pub unsafe fn as_string(value: Value) -> *mut ObjString {
 
 pub unsafe fn as_closure(value: Value) -> *mut ObjClosure {
     as_obj(value) as *mut ObjClosure
+}
+
+pub unsafe fn as_class(value: Value) -> *mut ObjClass {
+    as_obj(value) as *mut ObjClass
+}
+
+pub unsafe fn as_instance(value: Value) -> *mut ObjInstance {
+    as_obj(value) as *mut ObjInstance
 }
 
 pub unsafe fn as_rs_str(value: Value) -> &'static str {
@@ -101,6 +117,8 @@ pub enum ObjType {
     String,
     Upvalue,
     Closure,
+    Class,
+    Instance,
 }
 
 #[repr(C)]
@@ -151,6 +169,19 @@ pub struct ObjClosure {
     pub upvalue_count: i32,
 }
 
+#[repr(C)]
+pub struct ObjClass {
+    pub obj: Obj,
+    pub name: *mut ObjString,
+}
+
+#[repr(C)]
+pub struct ObjInstance {
+    pub obj: Obj,
+    pub class: *mut ObjClass,
+    pub fields: Table,
+}
+
 pub unsafe fn new_closure(function: *mut ObjFunction) -> *mut ObjClosure {
     let upvalues = allocate!(*mut ObjUpvalue, (*function).upvalue_count);
     for i in 0..(*function).upvalue_count {
@@ -178,6 +209,19 @@ pub unsafe fn new_native(function: NativeFn) -> *mut ObjNative {
     let native = allocate_obj!(ObjNative, ObjType::Native);
     (*native).function = function;
     native
+}
+
+pub unsafe fn new_class(name: *mut ObjString) -> *mut ObjClass {
+    let class = allocate_obj!(ObjClass, ObjType::Class);
+    (*class).name = name;
+    class
+}
+
+pub unsafe fn new_instance(class: *mut ObjClass) -> *mut ObjInstance {
+    let instance = allocate_obj!(ObjInstance, ObjType::Instance);
+    (*instance).class = class;
+    init_table(&mut (*instance).fields);
+    instance
 }
 
 pub unsafe fn take_string(chars: *mut u8, length: i32) -> *mut ObjString {
@@ -225,6 +269,14 @@ unsafe fn print_function(function: *mut ObjFunction) {
 
 pub unsafe fn print_object(value: Value) {
     match obj_type(value) {
+        ObjType::Instance => {
+            print!("an instance"); // todo
+        }
+        ObjType::Class => {
+            print!("<class ");
+            print_object(obj_val((*as_class(value)).name as *mut Obj));
+            print!(">")
+        }
         ObjType::Function => print_function(as_function(value)),
         ObjType::Native => print!("<native fn>"),
         ObjType::String => print!("{}", as_rs_str(value)),
