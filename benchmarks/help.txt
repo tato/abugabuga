@@ -1,0 +1,2 @@
+https://benchmarksgame-team.pages.debian.net/benchmarksgame/fastest/lua-python3.html
+https://benchmarksgame-team.pages.debian.net/benchmarksgame/index.html

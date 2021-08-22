@@ -3,21 +3,10 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use crate::{
-    chunk::OpCode,
-    compiler::compile,
-    memory::free_objects,
-    object::{
-        as_class, as_closure, as_function, as_instance, as_native, as_string, copy_string,
-        is_instance, is_string, new_class, new_closure, new_instance, new_native, new_upvalue,
-        obj_type, take_string, NativeFn, Obj, ObjClosure, ObjType, ObjUpvalue,
-    },
-    table::{free_table, init_table, table_delete, table_get, table_set, Table},
-    value::{
+use crate::{chunk::OpCode, compiler::compile, memory::free_objects, object::{NativeFn, Obj, ObjClass, ObjClosure, ObjString, ObjType, ObjUpvalue, is_class, as_bound_method, as_class, as_closure, as_function, as_instance, as_native, as_string, copy_string, is_instance, is_string, new_bound_method, new_class, new_closure, new_instance, new_native, new_upvalue, obj_type, take_string}, table::{Table, table_add_all, free_table, init_table, table_delete, table_get, table_set}, value::{
         as_bool, as_number, bool_val, is_bool, is_nil, is_number, is_obj, nil_val, number_val,
         obj_val, print_value, values_equal, Value,
-    },
-};
+    }};
 
 #[cfg(feature = "debug_trace_execution")]
 use crate::debug::disassemble_instruction;
@@ -35,11 +24,11 @@ pub struct CallFrame {
 pub struct VM {
     pub frames: [CallFrame; FRAMES_MAX],
     pub frame_count: i32,
-
     pub stack: [Value; STACK_MAX],
     pub stack_top: *mut Value,
     pub globals: Table,
     pub strings: Table,
+    pub init_string: *mut ObjString,
     pub open_upvalues: *mut ObjUpvalue,
     pub bytes_allocated: usize,
     pub next_gc: usize,
@@ -76,6 +65,7 @@ pub static mut vm: VM = VM {
         capacity: 0,
         entries: ptr::null_mut(),
     },
+    init_string: ptr::null_mut(),
     open_upvalues: ptr::null_mut(),
     bytes_allocated: 0,
     next_gc: 0,
@@ -146,12 +136,16 @@ pub unsafe fn init_vm() {
     init_table(&mut vm.globals);
     init_table(&mut vm.strings);
 
+    vm.init_string = ptr::null_mut();
+    vm.init_string = copy_string("init".as_ptr(), 4);
+
     define_native("clock", clock_native);
 }
 
 pub unsafe fn free_vm() {
     free_table(&mut vm.globals);
     free_table(&mut vm.strings);
+    vm.init_string = ptr::null_mut();
     free_objects();
 }
 
@@ -212,10 +206,21 @@ unsafe fn call(closure: *mut ObjClosure, arg_count: i32) -> bool {
 unsafe fn call_value(callee: Value, arg_count: i32) -> bool {
     if is_obj(callee) {
         match obj_type(callee) {
+            ObjType::BoundMethod => {
+                let bound = as_bound_method(callee);
+                *vm.stack_top.offset(-arg_count as isize - 1) = (*bound).receiver;
+                return call((*bound).method, arg_count);
+            }
             ObjType::Class => {
                 let class = as_class(callee);
                 *vm.stack_top.offset(-arg_count as isize - 1) =
                     obj_val(new_instance(class) as *mut Obj);
+                let mut initializer = nil_val();
+                if table_get(&mut (*class).methods, vm.init_string, &mut initializer) {
+                    return call(as_closure(initializer), arg_count);
+                } else if arg_count != 0 {
+                    runtime_error!("Expected 0 arguments but got {}.", arg_count);
+                }
                 return true;
             }
             ObjType::Closure => return call(as_closure(callee), arg_count),
@@ -231,6 +236,47 @@ unsafe fn call_value(callee: Value, arg_count: i32) -> bool {
     }
     runtime_error!("Can only call functions and classes.");
     false
+}
+
+unsafe fn invoke_from_class(class: *mut ObjClass, name: *mut ObjString, arg_count: i32) -> bool {
+    let mut method = nil_val();
+    if !table_get(&mut (*class).methods, name, &mut method) {
+        runtime_error!("Undefined property '{}'.", "name->chars"); // todo
+        return false;
+    }
+    call(as_closure(method), arg_count)
+}
+
+unsafe fn invoke(name: *mut ObjString, arg_count: i32) -> bool {
+    let receiver = peek(arg_count as isize);
+
+    if !is_instance(receiver) {
+        runtime_error!("Only instances have methods.");
+        return false;
+    }
+
+    let instance = as_instance(receiver);
+
+    let mut value = nil_val();
+    if table_get(&mut (*instance).fields, name, &mut value) {
+        *vm.stack_top.offset(-arg_count as isize - 1) = value;
+        return call_value(value, arg_count);
+    }
+
+    invoke_from_class((*instance).class, name, arg_count)
+}
+
+unsafe fn bind_method(class: *mut ObjClass, name: *mut ObjString) -> bool {
+    let mut method = nil_val();
+    if !table_get(&mut (*class).methods, name, &mut method) {
+        runtime_error!("Undefined property '{}'.", "name->chars");
+        return false;
+    }
+
+    let bound = new_bound_method(peek(0), as_closure(method));
+    pop();
+    push(obj_val(bound as *mut Obj));
+    true
 }
 
 unsafe fn capture_upvalue(local: *mut Value) -> *mut ObjUpvalue {
@@ -263,6 +309,13 @@ unsafe fn close_upvalues(last: *mut Value) {
         (*upvalue).location = &mut (*upvalue).closed;
         vm.open_upvalues = (*upvalue).next;
     }
+}
+
+unsafe fn define_method(name: *mut ObjString) {
+    let method = peek(0);
+    let class = as_class(peek(1));
+    table_set(&mut (*class).methods, name, method);
+    pop();
 }
 
 unsafe fn is_falsey(value: Value) -> bool {
@@ -423,8 +476,7 @@ unsafe fn run() -> InterpretResult {
                 if table_get(&mut (*instance).fields, name, &mut value) {
                     pop();
                     push(value);
-                } else {
-                    runtime_error!("Undefined property '{}'.", "name->chars");
+                } else if !bind_method((*instance).class, name) {
                     return InterpretResult::RuntimeError;
                 }
             }
@@ -439,6 +491,14 @@ unsafe fn run() -> InterpretResult {
                 let value = pop();
                 pop();
                 push(value);
+            }
+            i if i == OpCode::GetSuper as u8 => {
+                let name = read_string!();
+                let superclass = as_class(pop());
+
+                if !bind_method(superclass, name) {
+                    return InterpretResult::RuntimeError;
+                }
             }
             i if i == OpCode::Equal as u8 => {
                 let b = pop();
@@ -495,6 +555,23 @@ unsafe fn run() -> InterpretResult {
                 }
                 frame = &mut vm.frames[vm.frame_count as usize - 1];
             }
+            i if i == OpCode::Invoke as u8 => {
+                let method = read_string!();
+                let arg_count = read_byte!();
+                if !invoke(method, arg_count as i32) {
+                    return InterpretResult::RuntimeError;
+                }
+                frame = &mut vm.frames[vm.frame_count as usize - 1];
+            }
+            i if i == OpCode::SuperInvoke as u8 => {
+                let method = read_string!();
+                let arg_count = read_byte!();
+                let superclass = as_class(pop());
+                if !invoke_from_class(superclass, method, arg_count as i32) {
+                    return InterpretResult::RuntimeError;
+                }
+                frame = &mut vm.frames[vm.frame_count as usize - 1];
+            }
             i if i == OpCode::Closure as u8 => {
                 let function = as_function(read_constant!());
                 let closure = new_closure(function);
@@ -529,6 +606,19 @@ unsafe fn run() -> InterpretResult {
             }
             i if i == OpCode::Class as u8 => {
                 push(obj_val(new_class(read_string!()) as *mut Obj));
+            }
+            i if i == OpCode::Inherit as u8 => {
+                let superclass = peek(1);
+                if !is_class(superclass) {
+                    runtime_error!("Superclass must be a class.");
+                    return InterpretResult::RuntimeError;
+                }
+                let subclass = as_class(peek(0));
+                table_add_all(&mut (*as_class(superclass)).methods, &mut (*subclass).methods);
+                pop();
+            }
+            i if i == OpCode::Method as u8 => {
+                define_method(read_string!());
             }
             _ => break,
         }

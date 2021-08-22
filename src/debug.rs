@@ -51,6 +51,7 @@ pub unsafe fn disassemble_instruction(chunk: *mut Chunk, mut offset: i32) -> i32
         i if i == OpCode::SetProperty as u8 => {
             constant_instruction("OP_SET_PROPERTY", chunk, offset)
         }
+        i if i == OpCode::GetSuper as u8 => constant_instruction("OP_GET_SUPER", chunk, offset),
         i if i == OpCode::Equal as u8 => simple_instruction("OP_EQUAL", offset),
         i if i == OpCode::Greater as u8 => simple_instruction("OP_GREATER", offset),
         i if i == OpCode::Less as u8 => simple_instruction("OP_LESS", offset),
@@ -67,6 +68,8 @@ pub unsafe fn disassemble_instruction(chunk: *mut Chunk, mut offset: i32) -> i32
         i if i == OpCode::Loop as u8 => jump_instruction("OP_LOOP", -1, chunk, offset),
         i if i == OpCode::Print as u8 => simple_instruction("OP_PRINT", offset),
         i if i == OpCode::Call as u8 => byte_instruction("OP_CALL", chunk, offset),
+        i if i == OpCode::Invoke as u8 => invoke_instruction("OP_INVOKE", chunk, offset),
+        i if i == OpCode::SuperInvoke as u8 => invoke_instruction("OP_SUPER_INVOKE", chunk, offset),
         i if i == OpCode::Closure as u8 => {
             offset += 1;
             let constant = *(*chunk).code.offset(offset as isize);
@@ -94,6 +97,8 @@ pub unsafe fn disassemble_instruction(chunk: *mut Chunk, mut offset: i32) -> i32
         i if i == OpCode::CloseUpvalue as u8 => simple_instruction("OP_CLOSE_UPVALUE", offset),
         i if i == OpCode::Return as u8 => simple_instruction("OP_RETURN", offset),
         i if i == OpCode::Class as u8 => constant_instruction("OP_CLASS", chunk, offset),
+        i if i == OpCode::Inherit as u8 => simple_instruction("OP_INHERIT", offset),
+        i if i == OpCode::Method as u8 => constant_instruction("OP_METHOD", chunk, offset),
         _ => {
             println!("Unknown opcode {}", instruction);
             offset + 1
@@ -113,6 +118,15 @@ unsafe fn constant_instruction(name: &str, chunk: *mut Chunk, offset: i32) -> i3
     print_value(*chunk.constants.values.add(constant as usize));
     println!("'");
     offset + 2
+}
+
+unsafe fn invoke_instruction(name: &str, chunk: *mut Chunk, offset: i32) -> i32 {
+    let constant = *(*chunk).code.offset(offset as isize + 1);
+    let arg_count = *(*chunk).code.offset(offset as isize + 2);
+    print!("{:-16} ({} args) {:4} '", name, constant);
+    print_value(*(*chunk).constants.values.add(constant as usize));
+    println!("'");
+    offset + 3
 }
 
 unsafe fn byte_instruction(name: &str, chunk: *mut Chunk, offset: i32) -> i32 {

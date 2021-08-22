@@ -20,6 +20,7 @@ pub enum OpCode {
     SetUpvalue,
     GetProperty,
     SetProperty,
+    GetSuper,
     Equal,
     Greater,
     Less,
@@ -34,10 +35,14 @@ pub enum OpCode {
     JumpIfFalse,
     Loop,
     Call,
+    Invoke,
+    SuperInvoke,
     Closure,
     CloseUpvalue,
     Return,
     Class,
+    Inherit,
+    Method,
 }
 
 pub struct Chunk {

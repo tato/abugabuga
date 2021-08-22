@@ -146,7 +146,7 @@ pub unsafe fn table_delete(table: *mut Table, key: *mut ObjString) -> bool {
     true
 }
 
-pub unsafe fn _table_add_all(from: *const Table, to: *mut Table) {
+pub unsafe fn table_add_all(from: *const Table, to: *mut Table) {
     let from = &*from;
     for i in 0..from.capacity {
         let entry = &*from.entries.offset(i as isize);

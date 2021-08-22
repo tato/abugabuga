@@ -1,16 +1,6 @@
 use std::{ffi::c_void, ptr};
 
-use crate::{
-    chunk::free_chunk,
-    compiler::mark_compiler_roots,
-    object::{
-        Obj, ObjClass, ObjClosure, ObjFunction, ObjInstance, ObjNative, ObjString, ObjType,
-        ObjUpvalue,
-    },
-    table::{free_table, mark_table, table_remove_white},
-    value::{as_obj, is_obj, Value, ValueArray},
-    vm::vm,
-};
+use crate::{chunk::free_chunk, compiler::mark_compiler_roots, object::{Obj, ObjBoundMethod, ObjClass, ObjClosure, ObjFunction, ObjInstance, ObjNative, ObjString, ObjType, ObjUpvalue}, table::{free_table, mark_table, table_remove_white}, value::{as_obj, is_obj, Value, ValueArray}, vm::vm};
 
 #[cfg(feature = "debug_log_gc")]
 use crate::value::{obj_val, print_value};
@@ -154,11 +144,17 @@ unsafe fn blacken_object(object: *mut Obj) {
         ObjType::Class => {
             let class = object as *mut ObjClass;
             mark_object((*class).name as *mut Obj);
+            mark_table(&mut (*class).methods);
         }
         ObjType::Instance => {
             let instance = object as *mut ObjInstance;
             mark_object((*instance).class as *mut Obj);
             mark_table(&mut (*instance).fields);
+        }
+        ObjType::BoundMethod => {
+            let bound = object as *mut ObjBoundMethod;
+            mark_value((*bound).receiver);
+            mark_object((*bound).method as *mut Obj);
         }
         ObjType::Native | ObjType::String => {}
     }
@@ -197,12 +193,17 @@ unsafe fn free_object(object: *mut Obj) {
             free!(ObjClosure, object);
         }
         ObjType::Class => {
+            let class = object as *mut ObjClass;
+            free_table(&mut (*class).methods);
             free!(ObjClass, object);
         }
         ObjType::Instance => {
             let instance = object as *mut ObjInstance;
             free_table(&mut (*instance).fields);
             free!(ObjInstance, object);
+        }
+        ObjType::BoundMethod => {
+            free!(ObjBoundMethod, object);
         }
     }
 }
@@ -226,6 +227,7 @@ unsafe fn mark_roots() {
 
     mark_table(&mut vm.globals);
     mark_compiler_roots();
+    mark_object(vm.init_string as *mut Obj);
 }
 
 unsafe fn trace_references() {

@@ -69,12 +69,16 @@ pub unsafe fn _is_closure(value: Value) -> bool {
     is_obj_type(value, ObjType::Closure)
 }
 
-pub unsafe fn _is_class(value: Value) -> bool {
+pub unsafe fn is_class(value: Value) -> bool {
     is_obj_type(value, ObjType::Class)
 }
 
 pub unsafe fn is_instance(value: Value) -> bool {
     is_obj_type(value, ObjType::Instance)
+}
+
+pub unsafe fn _is_bound_method(value: Value) -> bool {
+    is_obj_type(value, ObjType::BoundMethod)
 }
 
 pub unsafe fn as_function(value: Value) -> *mut ObjFunction {
@@ -101,6 +105,10 @@ pub unsafe fn as_instance(value: Value) -> *mut ObjInstance {
     as_obj(value) as *mut ObjInstance
 }
 
+pub unsafe fn as_bound_method(value: Value) -> *mut ObjBoundMethod {
+    as_obj(value) as *mut ObjBoundMethod
+}
+
 pub unsafe fn as_rs_str(value: Value) -> &'static str {
     let s = &*as_string(value);
     str::from_utf8_unchecked(slice::from_raw_parts(s.chars, s.length as usize))
@@ -112,13 +120,14 @@ unsafe fn is_obj_type(value: Value, ty: ObjType) -> bool {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ObjType {
+    BoundMethod,
+    Class,
+    Closure,
     Function,
+    Instance,
     Native,
     String,
     Upvalue,
-    Closure,
-    Class,
-    Instance,
 }
 
 #[repr(C)]
@@ -173,6 +182,7 @@ pub struct ObjClosure {
 pub struct ObjClass {
     pub obj: Obj,
     pub name: *mut ObjString,
+    pub methods: Table,
 }
 
 #[repr(C)]
@@ -180,6 +190,13 @@ pub struct ObjInstance {
     pub obj: Obj,
     pub class: *mut ObjClass,
     pub fields: Table,
+}
+
+#[repr(C)]
+pub struct ObjBoundMethod {
+    pub obj: Obj,
+    pub receiver: Value,
+    pub method: *mut ObjClosure,
 }
 
 pub unsafe fn new_closure(function: *mut ObjFunction) -> *mut ObjClosure {
@@ -214,6 +231,7 @@ pub unsafe fn new_native(function: NativeFn) -> *mut ObjNative {
 pub unsafe fn new_class(name: *mut ObjString) -> *mut ObjClass {
     let class = allocate_obj!(ObjClass, ObjType::Class);
     (*class).name = name;
+    init_table(&mut (*class).methods);
     class
 }
 
@@ -222,6 +240,13 @@ pub unsafe fn new_instance(class: *mut ObjClass) -> *mut ObjInstance {
     (*instance).class = class;
     init_table(&mut (*instance).fields);
     instance
+}
+
+pub unsafe fn new_bound_method(receiver: Value, method: *mut ObjClosure) -> *mut ObjBoundMethod {
+    let bound = allocate_obj!(ObjBoundMethod, ObjType::BoundMethod);
+    (*bound).receiver = receiver;
+    (*bound).method = method;
+    bound
 }
 
 pub unsafe fn take_string(chars: *mut u8, length: i32) -> *mut ObjString {
@@ -282,5 +307,6 @@ pub unsafe fn print_object(value: Value) {
         ObjType::String => print!("{}", as_rs_str(value)),
         ObjType::Upvalue => print!("upvalue"),
         ObjType::Closure => print_function((*as_closure(value)).function),
+        ObjType::BoundMethod => print_function((*(*as_bound_method(value)).method).function),
     }
 }

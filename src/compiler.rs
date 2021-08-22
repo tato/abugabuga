@@ -59,6 +59,8 @@ pub struct Upvalue {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FunctionType {
     Function,
+    Initializer,
+    Method,
     Script,
 }
 
@@ -73,6 +75,11 @@ pub struct Compiler {
     pub local_count: i32,
     pub upvalues: [Upvalue; UINT8_COUNT],
     pub scope_depth: i32,
+}
+
+pub struct ClassCompiler {
+    pub enclosing: *mut ClassCompiler,
+    pub has_superclass: bool,
 }
 
 #[allow(non_upper_case_globals)]
@@ -94,6 +101,8 @@ pub static mut parser: Parser = Parser {
 };
 #[allow(non_upper_case_globals)]
 pub static mut current: *mut Compiler = ptr::null_mut();
+#[allow(non_upper_case_globals)]
+pub static mut current_class: *mut ClassCompiler = ptr::null_mut();
 
 unsafe fn current_chunk() -> *mut Chunk {
     &mut (*(*current).function).chunk
@@ -225,7 +234,11 @@ unsafe fn emit_jump(instruction: u8) -> i32 {
 }
 
 unsafe fn emit_return() {
-    emit_byte(OpCode::Nil as u8);
+    if (*current).ty == FunctionType::Initializer {
+        emit_bytes(OpCode::GetLocal as u8, 0);
+    } else {
+        emit_byte(OpCode::Nil as u8);
+    }
     emit_byte(OpCode::Return as u8);
 }
 
@@ -270,9 +283,14 @@ unsafe fn init_compiler(compiler: *mut Compiler, ty: FunctionType) {
     let local = &mut (*current).locals[(*current).local_count as usize];
     (*current).local_count += 1;
     local.depth = 0;
-    local.name.start = "".as_bytes().as_ptr();
-    local.name.length = 0;
     local.is_captured = false;
+    if ty != FunctionType::Function {
+        local.name.start = "this".as_bytes().as_ptr();
+        local.name.length = 4;
+    } else {
+        local.name.start = "".as_bytes().as_ptr();
+        local.name.length = 0;
+    }
 }
 
 unsafe fn end_compiler() -> *mut ObjFunction {
@@ -347,6 +365,10 @@ unsafe fn dot(can_assign: bool) {
     if can_assign && mtch(TokenType::Equal) {
         expression();
         emit_bytes(OpCode::SetProperty as u8, name);
+    } else if mtch(TokenType::LeftParen) {
+        let arg_count = argument_list();
+        emit_bytes(OpCode::Invoke as u8, name);
+        emit_byte(arg_count);
     } else {
         emit_bytes(OpCode::GetProperty as u8, name);
     }
@@ -425,6 +447,42 @@ unsafe fn variable(can_assign: bool) {
     named_variable(parser.previous, can_assign);
 }
 
+unsafe fn synthetic_token(text: &'static str) -> Token {
+    Token { ty: TokenType::Nil, start: text.as_ptr(), length: text.len() as i32, line: parser.previous.line }
+}
+
+unsafe fn super_(_can_assign: bool) {
+    if current_class == ptr::null_mut() {
+        error("Can't use 'super' outside of a class.");
+    } else if !(*current_class).has_superclass {
+        error("Can't use 'super' in a class with no superclass.");
+    }
+
+    consume(TokenType::Dot, "Expect '.' after 'super'.");
+    consume(TokenType::Identifier, "Expect superclass method name.");
+    let name = identifier_constant(&parser.previous);
+
+    named_variable(synthetic_token("this"), false);
+    if mtch(TokenType::LeftParen) {
+        let arg_count = argument_list();
+        named_variable(synthetic_token("super"), false);
+        emit_bytes(OpCode::SuperInvoke as u8, name);
+        emit_byte(arg_count);
+    } else {
+        named_variable(synthetic_token("super"), false);
+        emit_bytes(OpCode::GetSuper as u8, name);
+    }
+}
+
+unsafe fn this(_can_assign: bool) {
+    if current_class == ptr::null_mut() {
+        error("Can't use 'this' outside of a class.");
+        return;
+    }
+
+    variable(false);
+}
+
 unsafe fn unary(_can_assign: bool) {
     let ty = parser.previous.ty;
 
@@ -486,8 +544,8 @@ static rules: [ParseRule; 40] = unsafe {
     set_data!(Or, None, Some(or), Or);
     set_data!(Print, None, None, None);
     set_data!(Return, None, None, None);
-    set_data!(Super, None, None, None);
-    set_data!(This, None, None, None);
+    set_data!(Super, Some(super_), None, None);
+    set_data!(This, Some(this), None, None);
     set_data!(True, Some(literal), None, None);
     set_data!(Var, None, None, None);
     set_data!(While, None, None, None);
@@ -724,16 +782,63 @@ unsafe fn function(ty: FunctionType) {
     }
 }
 
+unsafe fn method() {
+    consume(TokenType::Identifier, "Expect method name.");
+    let constant = identifier_constant(&parser.previous);
+
+    let mut ty = FunctionType::Method;
+    if parser.previous.length == 4 && "init".as_bytes() == slice::from_raw_parts(parser.previous.start, 4) {
+        ty = FunctionType::Initializer;
+    }
+    function(ty);
+    emit_bytes(OpCode::Method as u8, constant);
+}
+
 unsafe fn class_declaration() {
     consume(TokenType::Identifier, "Expect class name.");
+    let class_name = parser.previous;
     let name_constant = identifier_constant(&parser.previous);
     declare_variable();
 
     emit_bytes(OpCode::Class as u8, name_constant);
     define_variable(name_constant);
 
+    let mut class_compiler = ClassCompiler {
+        enclosing: current_class,
+        has_superclass: false,
+    };
+    current_class = &mut class_compiler;
+
+    if mtch(TokenType::Less) {
+        consume(TokenType::Identifier, "Expect superclass name.");
+        variable(false);
+
+        if identifiers_equal(&class_name, &parser.previous) {
+            error("A class can't inherit from itself.");
+        }
+
+        begin_scope();
+        add_local(synthetic_token("super"));
+        define_variable(0);
+        
+        named_variable(class_name, false);
+        emit_byte(OpCode::Inherit as u8);
+        class_compiler.has_superclass = true;
+    }
+
+    named_variable(class_name, false);
     consume(TokenType::LeftBrace, "Expect '{' before class body.");
+    while !check(TokenType::RightBrace) && !check(TokenType::Eof) {
+        method();
+    }
     consume(TokenType::RightBrace, "Expect '}' after class body.");
+    emit_byte(OpCode::Pop as u8);
+
+    if class_compiler.has_superclass {
+        end_scope();
+    }
+
+    current_class = (*current_class).enclosing;
 }
 
 unsafe fn fun_declaration() {
@@ -844,6 +949,10 @@ unsafe fn return_statement() {
     if mtch(TokenType::Semicolon) {
         emit_return();
     } else {
+        if (*current).ty == FunctionType::Initializer {
+            error("Can't return a value from an initializer.");
+        }
+
         expression();
         consume(TokenType::Semicolon, "Expect ';' after return value.");
         emit_byte(OpCode::Return as u8);
