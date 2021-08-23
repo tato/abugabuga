@@ -3,10 +3,22 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use crate::{chunk::OpCode, compiler::compile, memory::free_objects, object::{NativeFn, Obj, ObjClass, ObjClosure, ObjString, ObjType, ObjUpvalue, is_class, as_bound_method, as_class, as_closure, as_function, as_instance, as_native, as_string, copy_string, is_instance, is_string, new_bound_method, new_class, new_closure, new_instance, new_native, new_upvalue, obj_type, take_string}, table::{Table, table_add_all, free_table, init_table, table_delete, table_get, table_set}, value::{
+use crate::{
+    chunk::OpCode,
+    compiler::compile,
+    memory::free_objects,
+    object::{
+        as_bound_method, as_class, as_closure, as_function, as_instance, as_native, as_string,
+        copy_string, is_class, is_instance, is_string, new_bound_method, new_class, new_closure,
+        new_instance, new_native, new_upvalue, obj_type, take_string, NativeFn, Obj, ObjClass,
+        ObjClosure, ObjString, ObjType, ObjUpvalue,
+    },
+    table::{free_table, init_table, table_add_all, table_delete, table_get, table_set, Table},
+    value::{
         as_bool, as_number, bool_val, is_bool, is_nil, is_number, is_obj, nil_val, number_val,
         obj_val, print_value, values_equal, Value,
-    }};
+    },
+};
 
 #[cfg(feature = "debug_trace_execution")]
 use crate::debug::disassemble_instruction;
@@ -614,7 +626,10 @@ unsafe fn run() -> InterpretResult {
                     return InterpretResult::RuntimeError;
                 }
                 let subclass = as_class(peek(0));
-                table_add_all(&mut (*as_class(superclass)).methods, &mut (*subclass).methods);
+                table_add_all(
+                    &mut (*as_class(superclass)).methods,
+                    &mut (*subclass).methods,
+                );
                 pop();
             }
             i if i == OpCode::Method as u8 => {

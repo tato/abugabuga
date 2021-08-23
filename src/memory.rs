@@ -1,6 +1,16 @@
 use std::{ffi::c_void, ptr};
 
-use crate::{chunk::free_chunk, compiler::mark_compiler_roots, object::{Obj, ObjBoundMethod, ObjClass, ObjClosure, ObjFunction, ObjInstance, ObjNative, ObjString, ObjType, ObjUpvalue}, table::{free_table, mark_table, table_remove_white}, value::{as_obj, is_obj, Value, ValueArray}, vm::vm};
+use crate::{
+    chunk::free_chunk,
+    compiler::mark_compiler_roots,
+    object::{
+        Obj, ObjBoundMethod, ObjClass, ObjClosure, ObjFunction, ObjInstance, ObjNative, ObjString,
+        ObjType, ObjUpvalue,
+    },
+    table::{free_table, mark_table, table_remove_white},
+    value::{as_obj, is_obj, Value, ValueArray},
+    vm::vm,
+};
 
 #[cfg(feature = "debug_log_gc")]
 use crate::value::{obj_val, print_value};

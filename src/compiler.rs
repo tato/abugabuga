@@ -448,7 +448,12 @@ unsafe fn variable(can_assign: bool) {
 }
 
 unsafe fn synthetic_token(text: &'static str) -> Token {
-    Token { ty: TokenType::Nil, start: text.as_ptr(), length: text.len() as i32, line: parser.previous.line }
+    Token {
+        ty: TokenType::Nil,
+        start: text.as_ptr(),
+        length: text.len() as i32,
+        line: parser.previous.line,
+    }
 }
 
 unsafe fn super_(_can_assign: bool) {
@@ -787,7 +792,9 @@ unsafe fn method() {
     let constant = identifier_constant(&parser.previous);
 
     let mut ty = FunctionType::Method;
-    if parser.previous.length == 4 && "init".as_bytes() == slice::from_raw_parts(parser.previous.start, 4) {
+    if parser.previous.length == 4
+        && "init".as_bytes() == slice::from_raw_parts(parser.previous.start, 4)
+    {
         ty = FunctionType::Initializer;
     }
     function(ty);
@@ -820,7 +827,7 @@ unsafe fn class_declaration() {
         begin_scope();
         add_local(synthetic_token("super"));
         define_variable(0);
-        
+
         named_variable(class_name, false);
         emit_byte(OpCode::Inherit as u8);
         class_compiler.has_superclass = true;

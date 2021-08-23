@@ -2,83 +2,96 @@ use std::ptr;
 
 use crate::object::{print_object, Obj};
 
-#[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum ValueType {
-    Bool,
-    Nil,
-    Number,
-    Obj,
-}
+#[cfg(not(feature = "nan_boxing"))]
+mod value_inner {
 
-#[derive(Clone, Copy)]
-pub union ValueValue {
-    boolean: bool,
-    number: f64,
-    obj: *mut Obj,
-}
+    use super::Obj;
 
-#[derive(Clone, Copy)]
-pub struct Value {
-    ty: ValueType,
-    val: ValueValue,
-}
+    #[repr(u8)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub enum ValueType {
+        Bool,
+        Nil,
+        Number,
+        Obj,
+    }
 
-pub fn is_bool(value: Value) -> bool {
-    value.ty == ValueType::Bool
-}
+    #[derive(Clone, Copy)]
+    pub union ValueValue {
+        pub boolean: bool,
+        pub number: f64,
+        pub obj: *mut Obj,
+    }
 
-pub fn is_nil(value: Value) -> bool {
-    value.ty == ValueType::Nil
-}
+    #[derive(Clone, Copy)]
+    pub struct Value {
+        pub ty: ValueType,
+        pub val: ValueValue,
+    }
 
-pub fn is_number(value: Value) -> bool {
-    value.ty == ValueType::Number
-}
+    pub fn is_bool(value: Value) -> bool {
+        value.ty == ValueType::Bool
+    }
 
-pub fn is_obj(value: Value) -> bool {
-    value.ty == ValueType::Obj
-}
+    pub fn is_nil(value: Value) -> bool {
+        value.ty == ValueType::Nil
+    }
 
-pub unsafe fn as_bool(value: Value) -> bool {
-    value.val.boolean
-}
+    pub fn is_number(value: Value) -> bool {
+        value.ty == ValueType::Number
+    }
 
-pub unsafe fn as_number(value: Value) -> f64 {
-    value.val.number
-}
+    pub fn is_obj(value: Value) -> bool {
+        value.ty == ValueType::Obj
+    }
 
-pub unsafe fn as_obj(value: Value) -> *mut Obj {
-    value.val.obj
-}
+    pub unsafe fn as_bool(value: Value) -> bool {
+        value.val.boolean
+    }
 
-pub fn bool_val(value: bool) -> Value {
-    Value {
-        ty: ValueType::Bool,
-        val: ValueValue { boolean: value },
+    pub unsafe fn as_number(value: Value) -> f64 {
+        value.val.number
+    }
+
+    pub unsafe fn as_obj(value: Value) -> *mut Obj {
+        value.val.obj
+    }
+
+    pub fn bool_val(value: bool) -> Value {
+        Value {
+            ty: ValueType::Bool,
+            val: ValueValue { boolean: value },
+        }
+    }
+
+    pub const fn nil_val() -> Value {
+        Value {
+            ty: ValueType::Nil,
+            val: ValueValue { number: 0.0 },
+        }
+    }
+
+    pub fn number_val(value: f64) -> Value {
+        Value {
+            ty: ValueType::Number,
+            val: ValueValue { number: value },
+        }
+    }
+
+    pub fn obj_val(value: *mut Obj) -> Value {
+        Value {
+            ty: ValueType::Obj,
+            val: ValueValue { obj: value },
+        }
     }
 }
 
-pub const fn nil_val() -> Value {
-    Value {
-        ty: ValueType::Nil,
-        val: ValueValue { number: 0.0 },
-    }
+#[cfg(feature = "nan_boxing")]
+mod value_inner {
+    struct Value(u64);
 }
 
-pub fn number_val(value: f64) -> Value {
-    Value {
-        ty: ValueType::Number,
-        val: ValueValue { number: value },
-    }
-}
-
-pub fn obj_val(value: *mut Obj) -> Value {
-    Value {
-        ty: ValueType::Obj,
-        val: ValueValue { obj: value },
-    }
-}
+pub use value_inner::*;
 
 pub struct ValueArray {
     pub capacity: i32,
