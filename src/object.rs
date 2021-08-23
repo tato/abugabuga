@@ -1,12 +1,6 @@
 use std::{ptr, slice, str};
 
-use crate::{
-    chunk::{init_chunk, Chunk},
-    memory::reallocate,
-    table::{init_table, table_find_string, table_set, Table},
-    value::{as_obj, is_obj, nil_val, obj_val, Value},
-    vm::{pop, push, vm},
-};
+use crate::{chunk::{init_chunk, Chunk}, memory::reallocate, table::{init_table, table_find_string, table_set, Table}, value::{NIL_VAL, Value, as_obj, is_obj, obj_val}, vm::{pop, push, vm}};
 
 macro_rules! allocate_obj {
     ($t:ty, $obj_type:expr) => {
@@ -35,7 +29,7 @@ unsafe fn allocate_string(chars: *mut u8, length: i32, hash: u32) -> *mut ObjStr
     (*string).chars = chars;
     (*string).hash = hash;
     push(obj_val(string as *mut Obj));
-    table_set(&mut vm.strings, string, nil_val());
+    table_set(&mut vm.strings, string, NIL_VAL);
     pop();
     string
 }
@@ -274,7 +268,7 @@ pub unsafe fn copy_string(chars: *const u8, length: i32) -> *mut ObjString {
 pub unsafe fn new_upvalue(slot: *mut Value) -> *mut ObjUpvalue {
     let upvalue = allocate_obj!(ObjUpvalue, ObjType::Upvalue);
     (*upvalue).location = slot;
-    (*upvalue).closed = nil_val();
+    (*upvalue).closed = NIL_VAL;
     (*upvalue).next = ptr::null_mut();
     upvalue
 }

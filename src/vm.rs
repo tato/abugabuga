@@ -3,10 +3,22 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use crate::{chunk::OpCode, compiler::compile, memory::free_objects, object::{NativeFn, Obj, ObjClass, ObjClosure, ObjString, ObjType, ObjUpvalue, is_class, as_bound_method, as_class, as_closure, as_function, as_instance, as_native, as_string, copy_string, is_instance, is_string, new_bound_method, new_class, new_closure, new_instance, new_native, new_upvalue, obj_type, take_string}, table::{Table, table_add_all, free_table, init_table, table_delete, table_get, table_set}, value::{
-        as_bool, as_number, bool_val, is_bool, is_nil, is_number, is_obj, nil_val, number_val,
+use crate::{
+    chunk::OpCode,
+    compiler::compile,
+    memory::free_objects,
+    object::{
+        as_bound_method, as_class, as_closure, as_function, as_instance, as_native, as_string,
+        copy_string, is_class, is_instance, is_string, new_bound_method, new_class, new_closure,
+        new_instance, new_native, new_upvalue, obj_type, take_string, NativeFn, Obj, ObjClass,
+        ObjClosure, ObjString, ObjType, ObjUpvalue,
+    },
+    table::{free_table, init_table, table_add_all, table_delete, table_get, table_set, Table},
+    value::{
+        as_bool, as_number, bool_val, is_bool, is_nil, is_number, is_obj, NIL_VAL, number_val,
         obj_val, print_value, values_equal, Value,
-    }};
+    },
+};
 
 #[cfg(feature = "debug_trace_execution")]
 use crate::debug::disassemble_instruction;
@@ -53,7 +65,7 @@ const ZERO_CALL_FRAME: CallFrame = CallFrame {
 pub static mut vm: VM = VM {
     frames: [ZERO_CALL_FRAME; FRAMES_MAX],
     frame_count: 0,
-    stack: [nil_val(); STACK_MAX],
+    stack: [NIL_VAL; STACK_MAX],
     stack_top: ptr::null_mut(),
     globals: Table {
         count: 0,
@@ -215,7 +227,7 @@ unsafe fn call_value(callee: Value, arg_count: i32) -> bool {
                 let class = as_class(callee);
                 *vm.stack_top.offset(-arg_count as isize - 1) =
                     obj_val(new_instance(class) as *mut Obj);
-                let mut initializer = nil_val();
+                let mut initializer = NIL_VAL;
                 if table_get(&mut (*class).methods, vm.init_string, &mut initializer) {
                     return call(as_closure(initializer), arg_count);
                 } else if arg_count != 0 {
@@ -239,7 +251,7 @@ unsafe fn call_value(callee: Value, arg_count: i32) -> bool {
 }
 
 unsafe fn invoke_from_class(class: *mut ObjClass, name: *mut ObjString, arg_count: i32) -> bool {
-    let mut method = nil_val();
+    let mut method = NIL_VAL;
     if !table_get(&mut (*class).methods, name, &mut method) {
         runtime_error!("Undefined property '{}'.", "name->chars"); // todo
         return false;
@@ -257,7 +269,7 @@ unsafe fn invoke(name: *mut ObjString, arg_count: i32) -> bool {
 
     let instance = as_instance(receiver);
 
-    let mut value = nil_val();
+    let mut value = NIL_VAL;
     if table_get(&mut (*instance).fields, name, &mut value) {
         *vm.stack_top.offset(-arg_count as isize - 1) = value;
         return call_value(value, arg_count);
@@ -267,7 +279,7 @@ unsafe fn invoke(name: *mut ObjString, arg_count: i32) -> bool {
 }
 
 unsafe fn bind_method(class: *mut ObjClass, name: *mut ObjString) -> bool {
-    let mut method = nil_val();
+    let mut method = NIL_VAL;
     if !table_get(&mut (*class).methods, name, &mut method) {
         runtime_error!("Undefined property '{}'.", "name->chars");
         return false;
@@ -406,7 +418,7 @@ unsafe fn run() -> InterpretResult {
                 let constant = read_constant!();
                 push(constant);
             }
-            i if i == OpCode::Nil as u8 => push(nil_val()),
+            i if i == OpCode::Nil as u8 => push(NIL_VAL),
             i if i == OpCode::True as u8 => push(bool_val(true)),
             i if i == OpCode::False as u8 => push(bool_val(false)),
             i if i == OpCode::Pop as u8 => {
@@ -422,7 +434,7 @@ unsafe fn run() -> InterpretResult {
             }
             i if i == OpCode::GetGlobal as u8 => {
                 let name = read_string!();
-                let mut value = nil_val(); // @todo uninitialized
+                let mut value = NIL_VAL; // @todo uninitialized
                 if !table_get(&mut vm.globals, name, &mut value) {
                     runtime_error!(
                         "Undefined variable '{}'.",
@@ -472,7 +484,7 @@ unsafe fn run() -> InterpretResult {
                 let instance = as_instance(peek(0));
                 let name = read_string!();
 
-                let mut value = nil_val();
+                let mut value = NIL_VAL;
                 if table_get(&mut (*instance).fields, name, &mut value) {
                     pop();
                     push(value);
@@ -614,7 +626,10 @@ unsafe fn run() -> InterpretResult {
                     return InterpretResult::RuntimeError;
                 }
                 let subclass = as_class(peek(0));
-                table_add_all(&mut (*as_class(superclass)).methods, &mut (*subclass).methods);
+                table_add_all(
+                    &mut (*as_class(superclass)).methods,
+                    &mut (*subclass).methods,
+                );
                 pop();
             }
             i if i == OpCode::Method as u8 => {

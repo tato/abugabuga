@@ -6,7 +6,7 @@ use std::{
 use crate::{
     memory::{mark_object, mark_value},
     object::{Obj, ObjString},
-    value::{bool_val, is_nil, nil_val, Value},
+    value::{bool_val, is_nil, NIL_VAL, Value},
 };
 
 const TABLE_MAX_LOAD: f32 = 0.75;
@@ -38,7 +38,7 @@ pub unsafe fn free_table(table: *mut Table) {
 
 unsafe fn find_entry(entries: *mut Entry, capacity: i32, key: *mut ObjString) -> *mut Entry {
     let key = &mut *key;
-    let mut index = key.hash % capacity as u32;
+    let mut index = key.hash & ((capacity - 1) as u32);
     let mut tombstone = ptr::null_mut();
 
     loop {
@@ -61,7 +61,7 @@ unsafe fn find_entry(entries: *mut Entry, capacity: i32, key: *mut ObjString) ->
             return entry;
         }
 
-        index = (index + 1) % capacity as u32;
+        index = (index + 1) & ((capacity - 1) as u32);
     }
 }
 
@@ -70,7 +70,7 @@ unsafe fn adjust_capacity(table: *mut Table, capacity: i32) {
     for i in 0..capacity {
         let e = &mut *entries.offset(i as isize);
         e.key = ptr::null_mut();
-        e.value = nil_val();
+        e.value = NIL_VAL;
     }
 
     let table = &mut *table;
@@ -167,7 +167,7 @@ pub unsafe fn table_find_string(
         return ptr::null_mut();
     }
 
-    let mut index = hash % table.capacity as u32;
+    let mut index = hash & ((table.capacity - 1) as u32);
     loop {
         let entry = &mut *table.entries.offset(index as isize);
         if entry.key == null_mut() {
@@ -185,7 +185,7 @@ pub unsafe fn table_find_string(
             }
         }
 
-        index = (index + 1) % table.capacity as u32;
+        index = (index + 1) & ((table.capacity - 1) as u32);
     }
 }
 
