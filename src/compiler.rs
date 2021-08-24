@@ -415,6 +415,24 @@ unsafe fn string(_can_assign: bool) {
     ));
 }
 
+unsafe fn list(_can_assign: bool) {
+    let mut count = 0;
+    if !check(TokenType::RightBracket) {
+        loop {
+            expression();
+            if count == 255 {
+                error("Can't have more than 255 elements in list initializer.");
+            }
+            count += 1;
+            if !mtch(TokenType::Comma) {
+                break;
+            }
+        }
+    }
+    consume(TokenType::RightBracket, "Expect ']' after list initializer.");
+    emit_bytes(OpCode::List as u8, count as u8);
+}
+
 unsafe fn named_variable(name: Token, can_assign: bool) {
     let (get_op, set_op);
     let mut arg = resolve_local(current, &name);
@@ -500,13 +518,14 @@ unsafe fn unary(_can_assign: bool) {
     }
 }
 
+const TOKEN_COUNT: usize = 42;
 #[allow(non_upper_case_globals)]
-static rules: [ParseRule; 40] = unsafe {
+static rules: [ParseRule; TOKEN_COUNT] = unsafe {
     let mut data = [ParseRule {
         prefix: None,
         infix: None,
         precedence: Precedence::None,
-    }; 40];
+    }; TOKEN_COUNT];
     macro_rules! set_data {
         ($ty:ident, $pre:expr, $in:expr, $prec:ident) => {
             data[TokenType::$ty as u8 as usize] = ParseRule {
@@ -520,6 +539,8 @@ static rules: [ParseRule; 40] = unsafe {
     set_data!(RightParen, None, None, None);
     set_data!(LeftBrace, None, None, None);
     set_data!(RightBrace, None, None, None);
+    set_data!(LeftBracket, Some(list), None, None);
+    set_data!(RightBracket, None, None, None);
     set_data!(Comma, None, None, None);
     set_data!(Dot, None, Some(dot), Call);
     set_data!(Minus, Some(unary), Some(binary), Term);

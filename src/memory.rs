@@ -1,16 +1,6 @@
 use std::{ffi::c_void, ptr};
 
-use crate::{
-    chunk::free_chunk,
-    compiler::mark_compiler_roots,
-    object::{
-        Obj, ObjBoundMethod, ObjClass, ObjClosure, ObjFunction, ObjInstance, ObjNative, ObjString,
-        ObjType, ObjUpvalue,
-    },
-    table::{free_table, mark_table, table_remove_white},
-    value::{as_obj, is_obj, Value, ValueArray},
-    vm::vm,
-};
+use crate::{chunk::free_chunk, compiler::mark_compiler_roots, object::{Obj, ObjBoundMethod, ObjClass, ObjClosure, ObjFunction, ObjInstance, ObjList, ObjNative, ObjString, ObjType, ObjUpvalue}, table::{free_table, mark_table, table_remove_white}, value::{as_obj, is_obj, Value, ValueArray}, vm::vm};
 
 #[cfg(feature = "debug_log_gc")]
 use crate::value::{obj_val, print_value};
@@ -138,6 +128,12 @@ unsafe fn blacken_object(object: *mut Obj) {
     }
 
     match (*object).ty {
+        ObjType::List => {
+            let list = object as *mut ObjList;
+            for val in &(*list).items {
+                mark_value(*val);
+            }
+        }
         ObjType::Closure => {
             let closure = object as *mut ObjClosure;
             mark_object((*closure).function as *mut Obj);
@@ -177,6 +173,12 @@ unsafe fn free_object(object: *mut Obj) {
     }
 
     match (*object).ty {
+        ObjType::List => {
+            let list = object as *mut ObjList;
+            (*list).items.clear();
+            (*list).items.shrink_to_fit();
+            free!(ObjList, object);
+        }
         ObjType::Function => {
             let function = object as *mut ObjFunction;
             free_chunk(&mut (*function).chunk);

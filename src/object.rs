@@ -1,6 +1,6 @@
 use std::{ptr, slice, str};
 
-use crate::{chunk::{init_chunk, Chunk}, memory::reallocate, table::{init_table, table_find_string, table_set, Table}, value::{NIL_VAL, Value, as_obj, is_obj, obj_val}, vm::{pop, push, vm}};
+use crate::{chunk::{init_chunk, Chunk}, memory::reallocate, table::{init_table, table_find_string, table_set, Table}, value::{NIL_VAL, Value, as_obj, is_obj, obj_val, print_value}, vm::{pop, push, vm}};
 
 macro_rules! allocate_obj {
     ($t:ty, $obj_type:expr) => {
@@ -75,6 +75,10 @@ pub unsafe fn _is_bound_method(value: Value) -> bool {
     is_obj_type(value, ObjType::BoundMethod)
 }
 
+pub unsafe fn _is_list(value: Value) -> bool {
+    is_obj_type(value, ObjType::List)
+}
+
 pub unsafe fn as_function(value: Value) -> *mut ObjFunction {
     as_obj(value) as *mut ObjFunction
 }
@@ -103,6 +107,10 @@ pub unsafe fn as_bound_method(value: Value) -> *mut ObjBoundMethod {
     as_obj(value) as *mut ObjBoundMethod
 }
 
+pub unsafe fn _as_list(value: Value) -> *mut ObjList {
+    as_obj(value) as *mut ObjList
+}
+
 pub unsafe fn as_rs_str(value: Value) -> &'static str {
     let s = &*as_string(value);
     str::from_utf8_unchecked(slice::from_raw_parts(s.chars, s.length as usize))
@@ -119,6 +127,7 @@ pub enum ObjType {
     Closure,
     Function,
     Instance,
+    List,
     Native,
     String,
     Upvalue,
@@ -191,6 +200,18 @@ pub struct ObjBoundMethod {
     pub obj: Obj,
     pub receiver: Value,
     pub method: *mut ObjClosure,
+}
+
+#[repr(C)]
+pub struct ObjList {
+    pub obj: Obj,
+    pub items: Vec<Value>,
+}
+
+pub unsafe fn new_list() -> *mut ObjList {
+    let list = allocate_obj!(ObjList, ObjType::List);
+    (*list).items = vec![];
+    list
 }
 
 pub unsafe fn new_closure(function: *mut ObjFunction) -> *mut ObjClosure {
@@ -288,6 +309,15 @@ unsafe fn print_function(function: *mut ObjFunction) {
 
 pub unsafe fn print_object(value: Value) {
     match obj_type(value) {
+        ObjType::List => {
+            let list = as_obj(value) as *mut ObjList;
+            print!("[ ");
+            for val in &(*list).items {
+                print_value(*val);
+                print!(", ");
+            }
+            print!("]");
+        }
         ObjType::Instance => {
             print_object(obj_val((*as_instance(value)).class as *mut Obj));
             print!(" instance");

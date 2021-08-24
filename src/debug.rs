@@ -35,6 +35,7 @@ pub unsafe fn disassemble_instruction(chunk: *mut Chunk, mut offset: i32) -> i32
         i if i == OpCode::Nil as u8 => simple_instruction("OP_NIL", offset),
         i if i == OpCode::True as u8 => simple_instruction("OP_TRUE", offset),
         i if i == OpCode::False as u8 => simple_instruction("OP_FALSE", offset),
+        i if i == OpCode::List as u8 => constant_instruction("OP_LIST", chunk, offset),
         i if i == OpCode::Pop as u8 => simple_instruction("OP_POP", offset),
         i if i == OpCode::GetLocal as u8 => byte_instruction("OP_GET_LOCAL", chunk, offset),
         i if i == OpCode::SetLocal as u8 => byte_instruction("OPSET_LOCAL", chunk, offset),

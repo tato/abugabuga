@@ -3,22 +3,10 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use crate::{
-    chunk::OpCode,
-    compiler::compile,
-    memory::free_objects,
-    object::{
-        as_bound_method, as_class, as_closure, as_function, as_instance, as_native, as_string,
-        copy_string, is_class, is_instance, is_string, new_bound_method, new_class, new_closure,
-        new_instance, new_native, new_upvalue, obj_type, take_string, NativeFn, Obj, ObjClass,
-        ObjClosure, ObjString, ObjType, ObjUpvalue,
-    },
-    table::{free_table, init_table, table_add_all, table_delete, table_get, table_set, Table},
-    value::{
+use crate::{chunk::OpCode, compiler::compile, memory::free_objects, object::{NativeFn, Obj, ObjClass, ObjClosure, ObjString, ObjType, ObjUpvalue, as_bound_method, as_class, as_closure, as_function, as_instance, as_native, as_string, copy_string, is_class, is_instance, is_string, new_bound_method, new_class, new_closure, new_instance, new_list, new_native, new_upvalue, obj_type, take_string}, table::{free_table, init_table, table_add_all, table_delete, table_get, table_set, Table}, value::{
         as_bool, as_number, bool_val, is_bool, is_nil, is_number, is_obj, NIL_VAL, number_val,
         obj_val, print_value, values_equal, Value,
-    },
-};
+    }};
 
 #[cfg(feature = "debug_trace_execution")]
 use crate::debug::disassemble_instruction;
@@ -422,6 +410,22 @@ unsafe fn run() -> InterpretResult {
             i if i == OpCode::Nil as u8 => push(NIL_VAL),
             i if i == OpCode::True as u8 => push(bool_val(true)),
             i if i == OpCode::False as u8 => push(bool_val(false)),
+            i if i == OpCode::List as u8 => {
+                let count = read_byte!();
+                // TODO: vecs won't trigger gc... 
+                // what if i run out of memory while doing this operation?
+                let mut items = vec![]; 
+                for i in 0..count {
+                    let val = peek((count - i - 1).into());
+                    items.push(val);
+                }
+                for _i in 0..count {
+                    pop();
+                }
+                let list = new_list();
+                (*list).items = items;
+                push(obj_val(list as *mut Obj));
+            }
             i if i == OpCode::Pop as u8 => {
                 pop();
             }

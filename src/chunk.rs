@@ -10,6 +10,7 @@ pub enum OpCode {
     Nil,
     True,
     False,
+    List,
     Pop,
     GetLocal,
     SetLocal,
