@@ -45,71 +45,87 @@ neptune.vy = 1.62824170038242295e-03 * DAYS_PER_YEAR;
 neptune.vz = -9.51592254519715870e-05 * DAYS_PER_YEAR;
 neptune.mass = 5.15138902046611451e-05 * SOLAR_MASS;
 
-var bodies = {sun,jupiter,saturn,uranus,neptune};
+var bodies = [sun,jupiter,saturn,uranus,neptune];
 
-local function advance(bodies, nbody, dt)
-  for i=1,nbody do
-    local bi = bodies[i]
-    local bix, biy, biz, bimass = bi.x, bi.y, bi.z, bi.mass
-    local bivx, bivy, bivz = bi.vx, bi.vy, bi.vz
-    for j=i+1,nbody do
-      local bj = bodies[j]
-      local dx, dy, dz = bix-bj.x, biy-bj.y, biz-bj.z
-      local dist2 = dx*dx + dy*dy + dz*dz
-      local mag = sqrt(dist2)
-      mag = dt / (mag * dist2)
-      local bm = bj.mass*mag
-      bivx = bivx - (dx * bm)
-      bivy = bivy - (dy * bm)
-      bivz = bivz - (dz * bm)
-      bm = bimass*mag
-      bj.vx = bj.vx + (dx * bm)
-      bj.vy = bj.vy + (dy * bm)
-      bj.vz = bj.vz + (dz * bm)
-    end
-    bi.vx = bivx
-    bi.vy = bivy
-    bi.vz = bivz
-    bi.x = bix + dt * bivx
-    bi.y = biy + dt * bivy
-    bi.z = biz + dt * bivz
-  end
-end
+fun advance(bodies, nbody, dt) {
+  for (var i = 1; i < nbody; i = i + 1) {
+    var bi = bodies[i];
+    var bix = bi.x;
+    var biy = bi.y; 
+    var biz = bi.z; 
+    var bimass = bi.mass;
+    var bivx = bi.vx;
+    var bivy = bi.vy;
+    var bivz = bi.vz;
+    for (var j = i + 1; j < nbody; j = j + 1) {
+      var bj = bodies[j]
+      var dx = bix - bj.x;
+      var dy = biy - bj.y;
+      var dz = biz - bj.z;
+      var dist2 = dx*dx + dy*dy + dz*dz;
+      var mag = sqrt(dist2);
+      mag = dt / (mag * dist2);
+      var bm = bj.mass*mag;
+      bivx = bivx - (dx * bm);
+      bivy = bivy - (dy * bm);
+      bivz = bivz - (dz * bm);
+      bm = bimass*mag;
+      bj.vx = bj.vx + (dx * bm);
+      bj.vy = bj.vy + (dy * bm);
+      bj.vz = bj.vz + (dz * bm);
+    }
+    bi.vx = bivx;
+    bi.vy = bivy;
+    bi.vz = bivz;
+    bi.x = bix + dt * bivx;
+    bi.y = biy + dt * bivy;
+    bi.z = biz + dt * bivz;
+  }
+}
 
-local function energy(bodies, nbody)
-  local e = 0
-  for i=1,nbody do
-    local bi = bodies[i]
-    local vx, vy, vz, bim = bi.vx, bi.vy, bi.vz, bi.mass
-    e = e + (0.5 * bim * (vx*vx + vy*vy + vz*vz))
-    for j=i+1,nbody do
-      local bj = bodies[j]
-      local dx, dy, dz = bi.x-bj.x, bi.y-bj.y, bi.z-bj.z
-      local distance = sqrt(dx*dx + dy*dy + dz*dz)
-      e = e - ((bim * bj.mass) / distance)
-    end
-  end
-  return e
-end
+fun energy(bodies, nbody) {
+  var e = 0;
+  for (var i = 1; i < nbody; i = i + 1) {
+    var bi = bodies[i];
+    var vx = bi.vx;
+    var vy = bi.vy;
+    var vz = bi.vz;
+    var bim = bi.mass;
+    e = e + (0.5 * bim * (vx*vx + vy*vy + vz*vz));
+    for (var j = i + 1; j < nbody; j = j + 1) {
+      var bj = bodies[j];
+      var dx = bi.x - bj.x;
+      var dy = bi.y - bj.y;
+      var dz = bi.z - bj.z;
+      var distance = sqrt(dx*dx + dy*dy + dz*dz);
+      e = e - ((bim * bj.mass) / distance);
+    }
+  }
+  return e;
+}
 
-local function offsetMomentum(b, nbody)
-  local px, py, pz = 0, 0, 0
-  for i=1,nbody do
-    local bi = b[i]
-    local bim = bi.mass
-    px = px + (bi.vx * bim)
-    py = py + (bi.vy * bim)
-    pz = pz + (bi.vz * bim)
-  end
-  b[1].vx = -px / SOLAR_MASS
-  b[1].vy = -py / SOLAR_MASS
-  b[1].vz = -pz / SOLAR_MASS
-end
+var offsetMomentum(b, nbody) {
+  var px = 0;
+  var py = 0;
+  var pz = 0;
+  for (var i = 1; i < nbody; i = i + 1) {
+    var bi = b[i];
+    var bim = bi.mass;
+    px = px + (bi.vx * bim);
+    py = py + (bi.vy * bim);
+    pz = pz + (bi.vz * bim);
+  }
+  b[1].vx = -px / SOLAR_MASS;
+  b[1].vy = -py / SOLAR_MASS;
+  b[1].vz = -pz / SOLAR_MASS;
+}
 
-local N = tonumber(arg and arg[1]) or 1000
-local nbody = #bodies
+var N = tonumber(arg && arg[1]) || 1000;
+var nbody = #bodies;
 
-offsetMomentum(bodies, nbody)
-io.write( string.format("%0.9f",energy(bodies, nbody)), "\n")
-for i=1,N do advance(bodies, nbody, 0.01) end
-io.write( string.format("%0.9f",energy(bodies, nbody)), "\n")
+offsetMomentum(bodies, nbody);
+// io.write( string.format("%0.9f",energy(bodies, nbody)), "\n");
+print energy(bodies, nbody);
+for (var i = 1; i < N; i = i + 1) { advance(bodies, nbody, 0.01); }
+// io.write( string.format("%0.9f",energy(bodies, nbody)), "\n")
+print energy(bodies, nbody);
