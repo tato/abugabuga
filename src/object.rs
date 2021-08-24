@@ -289,12 +289,11 @@ unsafe fn print_function(function: *mut ObjFunction) {
 pub unsafe fn print_object(value: Value) {
     match obj_type(value) {
         ObjType::Instance => {
-            print!("an instance"); // todo
+            print_object(obj_val((*as_instance(value)).class as *mut Obj));
+            print!(" instance");
         }
         ObjType::Class => {
-            print!("<class ");
             print_object(obj_val((*as_class(value)).name as *mut Obj));
-            print!(">")
         }
         ObjType::Function => print_function(as_function(value)),
         ObjType::Native => print!("<native fn>"),

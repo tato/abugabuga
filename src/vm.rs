@@ -232,6 +232,7 @@ unsafe fn call_value(callee: Value, arg_count: i32) -> bool {
                     return call(as_closure(initializer), arg_count);
                 } else if arg_count != 0 {
                     runtime_error!("Expected 0 arguments but got {}.", arg_count);
+                    return false;
                 }
                 return true;
             }

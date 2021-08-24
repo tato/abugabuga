@@ -617,7 +617,7 @@ unsafe fn add_upvalue(compiler: *mut Compiler, index: u8, is_local: bool) -> i32
     }
 
     if upvalue_count as usize == UINT8_COUNT {
-        error("Too many closure variables in function.");
+        error("Too many closure variables in scope.");
         return 0;
     }
 
@@ -874,7 +874,7 @@ unsafe fn var_declaration() {
 
 unsafe fn expression_statement() {
     expression();
-    consume(TokenType::Semicolon, "Expect ';' after expression;");
+    consume(TokenType::Semicolon, "Expect ';' after expression.");
     emit_byte(OpCode::Pop as u8);
 }
 
