@@ -4,8 +4,7 @@ use crate::object::{print_object};
 
 #[cfg(not(feature = "nan_boxing"))]
 mod value_inner {
-
-    use super::Obj;
+    use crate::object::Obj;
 
     #[repr(u8)]
     #[derive(Clone, Copy, PartialEq, Eq)]
