@@ -1,6 +1,6 @@
 use std::ptr;
 
-use crate::object::{print_object, Obj};
+use crate::object::{print_object};
 
 #[cfg(not(feature = "nan_boxing"))]
 mod value_inner {
