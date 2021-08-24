@@ -1,0 +1,3 @@
+list literals
+list indexing
+exponents in numbers

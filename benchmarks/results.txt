@@ -1,0 +1,8 @@
+$ time target/release/abugabuga.exe benchmarks/nbody.lox
+0.02749558872206887
+0.02749553761324955
+
+real    2m21.889s
+user    0m0.000s
+sys     0m0.000s
+

@@ -1,7 +1,4 @@
-use std::{
-    mem, ptr,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::{mem, ptr, time::{Duration, SystemTime, UNIX_EPOCH}};
 
 use crate::{chunk::OpCode, compiler::compile, memory::free_objects, object::{NativeFn, Obj, ObjClass, ObjClosure, ObjString, ObjType, ObjUpvalue, as_list, as_bound_method, as_class, as_closure, as_function, as_instance, as_native, as_string, copy_string, is_class, is_instance, is_list, is_string, new_bound_method, new_class, new_closure, new_instance, new_list, new_native, new_upvalue, obj_type, take_string}, table::{free_table, init_table, table_add_all, table_delete, table_get, table_set, Table}, value::{
         as_bool, as_number, bool_val, is_bool, is_nil, is_number, is_obj, NIL_VAL, number_val,
@@ -81,6 +78,13 @@ unsafe fn clock_native(_arg_count: i32, _args: *mut Value) -> Value {
     return number_val(clock);
 }
 
+unsafe fn sqrt_native(arg_count: i32, args: *mut Value) -> Value {
+    if arg_count != 1 && !is_number(*args) {
+        panic!("sqrt() only takes 1 numeric argument.");
+    }
+    return number_val(as_number(*args).sqrt());
+}
+
 unsafe fn reset_stack() {
     vm.stack_top = vm.stack.as_mut_ptr();
     vm.frame_count = 0;
@@ -140,6 +144,7 @@ pub unsafe fn init_vm() {
     vm.init_string = copy_string("init".as_ptr(), 4);
 
     define_native("clock", clock_native);
+    define_native("sqrt", sqrt_native);
 }
 
 pub unsafe fn free_vm() {

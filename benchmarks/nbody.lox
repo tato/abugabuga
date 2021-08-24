@@ -58,7 +58,7 @@ fun advance(bodies, nbody, dt) {
     var bivy = bi.vy;
     var bivz = bi.vz;
     for (var j = i + 1; j < nbody; j = j + 1) {
-      var bj = bodies[j]
+      var bj = bodies[j];
       var dx = bix - bj.x;
       var dy = biy - bj.y;
       var dz = biz - bj.z;
@@ -104,7 +104,7 @@ fun energy(bodies, nbody) {
   return e;
 }
 
-var offsetMomentum(b, nbody) {
+fun offsetMomentum(b, nbody) {
   var px = 0;
   var py = 0;
   var pz = 0;
@@ -120,8 +120,8 @@ var offsetMomentum(b, nbody) {
   b[1].vz = -pz / SOLAR_MASS;
 }
 
-var N = tonumber(arg && arg[1]) || 1000;
-var nbody = #bodies;
+var N = 50000000;
+var nbody = 5; // #bodies
 
 offsetMomentum(bodies, nbody);
 // io.write( string.format("%0.9f",energy(bodies, nbody)), "\n");

@@ -294,6 +294,15 @@ unsafe fn number() -> Token {
         while is_digit(peek()) {
             advance();
         }
+
+        if mtch('e') {
+            if !mtch('+') && !mtch('-') {
+                return error_token("Expect sign after 'e'.");
+            }
+            while is_digit(peek()) {
+                advance();
+            }
+        }
     }
 
     make_token(TokenType::Number)
