@@ -1,5 +1,5 @@
 var array = [ 1, 9, 9, 7, 0, 3, 0, 4 ];
 print array;
-//for (var i = 0; i < 8; i = i + 1) {
-//  print array[i];
-//}
+for (var i = 0; i < 8; i = i + 1) {
+  print array[i];
+}

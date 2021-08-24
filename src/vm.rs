@@ -3,7 +3,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use crate::{chunk::OpCode, compiler::compile, memory::free_objects, object::{NativeFn, Obj, ObjClass, ObjClosure, ObjString, ObjType, ObjUpvalue, as_bound_method, as_class, as_closure, as_function, as_instance, as_native, as_string, copy_string, is_class, is_instance, is_string, new_bound_method, new_class, new_closure, new_instance, new_list, new_native, new_upvalue, obj_type, take_string}, table::{free_table, init_table, table_add_all, table_delete, table_get, table_set, Table}, value::{
+use crate::{chunk::OpCode, compiler::compile, memory::free_objects, object::{NativeFn, Obj, ObjClass, ObjClosure, ObjString, ObjType, ObjUpvalue, as_list, as_bound_method, as_class, as_closure, as_function, as_instance, as_native, as_string, copy_string, is_class, is_instance, is_list, is_string, new_bound_method, new_class, new_closure, new_instance, new_list, new_native, new_upvalue, obj_type, take_string}, table::{free_table, init_table, table_add_all, table_delete, table_get, table_set, Table}, value::{
         as_bool, as_number, bool_val, is_bool, is_nil, is_number, is_obj, NIL_VAL, number_val,
         obj_val, print_value, values_equal, Value,
     }};
@@ -516,6 +516,23 @@ unsafe fn run() -> InterpretResult {
                 if !bind_method(superclass, name) {
                     return InterpretResult::RuntimeError;
                 }
+            }
+            i if i == OpCode::Index as u8 => {
+                if !is_list(peek(1)) {
+                    runtime_error!("Indexed value must be a list.");
+                    return InterpretResult::RuntimeError;
+                }
+
+                if !is_number(peek(0)) {
+                    runtime_error!("Index expression must be a number.");
+                    return InterpretResult::RuntimeError;
+                }
+
+                let index = as_number(pop());
+                let list = as_list(pop());
+
+                let val = (*list).items[index as usize];
+                push(val);
             }
             i if i == OpCode::Equal as u8 => {
                 let b = pop();

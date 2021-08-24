@@ -75,7 +75,7 @@ pub unsafe fn _is_bound_method(value: Value) -> bool {
     is_obj_type(value, ObjType::BoundMethod)
 }
 
-pub unsafe fn _is_list(value: Value) -> bool {
+pub unsafe fn is_list(value: Value) -> bool {
     is_obj_type(value, ObjType::List)
 }
 
@@ -107,7 +107,7 @@ pub unsafe fn as_bound_method(value: Value) -> *mut ObjBoundMethod {
     as_obj(value) as *mut ObjBoundMethod
 }
 
-pub unsafe fn _as_list(value: Value) -> *mut ObjList {
+pub unsafe fn as_list(value: Value) -> *mut ObjList {
     as_obj(value) as *mut ObjList
 }
 

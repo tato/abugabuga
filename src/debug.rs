@@ -53,6 +53,7 @@ pub unsafe fn disassemble_instruction(chunk: *mut Chunk, mut offset: i32) -> i32
             constant_instruction("OP_SET_PROPERTY", chunk, offset)
         }
         i if i == OpCode::GetSuper as u8 => constant_instruction("OP_GET_SUPER", chunk, offset),
+        i if i == OpCode::Index as u8 => simple_instruction("OP_INDEX", offset),
         i if i == OpCode::Equal as u8 => simple_instruction("OP_EQUAL", offset),
         i if i == OpCode::Greater as u8 => simple_instruction("OP_GREATER", offset),
         i if i == OpCode::Less as u8 => simple_instruction("OP_LESS", offset),

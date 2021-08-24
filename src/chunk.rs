@@ -22,6 +22,7 @@ pub enum OpCode {
     GetProperty,
     SetProperty,
     GetSuper,
+    Index,
     Equal,
     Greater,
     Less,

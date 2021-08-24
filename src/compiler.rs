@@ -433,6 +433,18 @@ unsafe fn list(_can_assign: bool) {
     emit_bytes(OpCode::List as u8, count as u8);
 }
 
+unsafe fn index(can_assign: bool) {
+    expression();
+    consume(TokenType::RightBracket, "Expect ']' after index operator.");
+
+    if can_assign && mtch(TokenType::Equal) {
+        expression();
+        unimplemented!("assign to []");
+    } else {
+        emit_byte(OpCode::Index as u8);
+    }
+}
+
 unsafe fn named_variable(name: Token, can_assign: bool) {
     let (get_op, set_op);
     let mut arg = resolve_local(current, &name);
@@ -539,7 +551,7 @@ static rules: [ParseRule; TOKEN_COUNT] = unsafe {
     set_data!(RightParen, None, None, None);
     set_data!(LeftBrace, None, None, None);
     set_data!(RightBrace, None, None, None);
-    set_data!(LeftBracket, Some(list), None, None);
+    set_data!(LeftBracket, Some(list), Some(index), Call);
     set_data!(RightBracket, None, None, None);
     set_data!(Comma, None, None, None);
     set_data!(Dot, None, Some(dot), Call);
