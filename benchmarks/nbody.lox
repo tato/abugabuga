@@ -48,7 +48,7 @@ neptune.mass = 5.15138902046611451e-05 * SOLAR_MASS;
 var bodies = [sun,jupiter,saturn,uranus,neptune];
 
 fun advance(bodies, nbody, dt) {
-  for (var i = 1; i < nbody; i = i + 1) {
+  for (var i = 0; i < nbody; i = i + 1) {
     var bi = bodies[i];
     var bix = bi.x;
     var biy = bi.y; 
@@ -85,7 +85,7 @@ fun advance(bodies, nbody, dt) {
 
 fun energy(bodies, nbody) {
   var e = 0;
-  for (var i = 1; i < nbody; i = i + 1) {
+  for (var i = 0; i < nbody; i = i + 1) {
     var bi = bodies[i];
     var vx = bi.vx;
     var vy = bi.vy;
@@ -108,7 +108,7 @@ fun offsetMomentum(b, nbody) {
   var px = 0;
   var py = 0;
   var pz = 0;
-  for (var i = 1; i < nbody; i = i + 1) {
+  for (var i = 0; i < nbody; i = i + 1) {
     var bi = b[i];
     var bim = bi.mass;
     px = px + (bi.vx * bim);
@@ -126,6 +126,6 @@ var nbody = 5; // #bodies
 offsetMomentum(bodies, nbody);
 // io.write( string.format("%0.9f",energy(bodies, nbody)), "\n");
 print energy(bodies, nbody);
-for (var i = 1; i < N; i = i + 1) { advance(bodies, nbody, 0.01); }
+for (var i = 0; i < N; i = i + 1) { advance(bodies, nbody, 0.01); }
 // io.write( string.format("%0.9f",energy(bodies, nbody)), "\n")
 print energy(bodies, nbody);
