@@ -651,7 +651,7 @@ self.open_upvalues = created_upvalue;
     
 
     pub unsafe fn interpret(&mut self, source: &str) -> InterpretResult {
-        let function = compile(source, self);
+        let function = compile(source);
         if function == ptr::null_mut() {
             return InterpretResult::CompileError;
         }

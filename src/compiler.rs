@@ -31,7 +31,7 @@ pub enum Precedence {
     _Primary,
 }
 
-type ParseFn = unsafe fn(&mut Parser, &mut VM, bool);
+type ParseFn = unsafe fn(&mut Parser, bool);
 
 #[derive(Clone, Copy)]
 pub struct ParseRule {
@@ -299,7 +299,7 @@ impl Parser {
         }
     }
 
-    unsafe fn parse_precedence(&mut self, vm: &mut VM, precedence: Precedence) {
+    unsafe fn parse_precedence(&mut self, precedence: Precedence) {
         self.advance();
         let prefix_rule = (*get_rule(self.previous.ty)).prefix;
         if prefix_rule.is_none() {
@@ -308,12 +308,12 @@ impl Parser {
         }
 
         let can_assign = precedence <= Precedence::Assignment;
-        (prefix_rule.unwrap())(self, vm, can_assign);
+        (prefix_rule.unwrap())(self, can_assign);
 
         while precedence <= (*get_rule(self.current.ty)).precedence {
             self.advance();
             let infix_rule = (*get_rule(self.previous.ty)).infix;
-            (infix_rule.unwrap())(self, vm, can_assign);
+            (infix_rule.unwrap())(self, can_assign);
         }
 
         if can_assign && self.mtch(TokenType::Equal) {
@@ -440,11 +440,11 @@ impl Parser {
         self.emit_bytes(OpCode::DefineGlobal as u8, global);
     }
 
-    unsafe fn argument_list(&mut self, vm: &mut VM) -> u8 {
+    unsafe fn argument_list(&mut self) -> u8 {
         let mut arg_count = 0;
         if !self.check(TokenType::RightParen) {
             loop {
-                self.expression(vm);
+                self.expression();
                 if arg_count == 255 {
                     self.error("Can't have more than 255 arguments.");
                 }
@@ -458,18 +458,18 @@ impl Parser {
         arg_count
     }
 
-    unsafe fn expression(&mut self, vm: &mut VM) {
-        self.parse_precedence(vm, Precedence::Assignment);
+    unsafe fn expression(&mut self) {
+        self.parse_precedence(Precedence::Assignment);
     }
 
-    unsafe fn block(&mut self, vm: &mut VM) {
+    unsafe fn block(&mut self) {
         while !self.check(TokenType::RightBrace) && !self.check(TokenType::Eof) {
-            self.declaration(vm);
+            self.declaration();
         }
         self.consume(TokenType::RightBrace, "Expect '}' after block.");
     }
 
-    unsafe fn function(&mut self, vm: &mut VM, ty: FunctionType) {
+    unsafe fn function(&mut self, ty: FunctionType) {
         let mut compiler: Compiler = mem::zeroed();
         self.init_compiler(&mut compiler, ty);
         self.begin_scope();
@@ -491,7 +491,7 @@ impl Parser {
         }
         self.consume(TokenType::RightParen, "Expect ')' after parameters.");
         self.consume(TokenType::LeftBrace, "Expect '{' before function body.");
-        self.block(vm);
+        self.block();
 
         let function = self.end_compiler();
         let shut_up_borrow_checker = self.make_constant(obj_val(function as *mut Obj));
@@ -510,7 +510,7 @@ impl Parser {
         }
     }
 
-    unsafe fn method(&mut self, vm: &mut VM) {
+    unsafe fn method(&mut self) {
         self.consume(TokenType::Identifier, "Expect method name.");
         let shut_up_borrow_checker: Token = self.previous;
         let constant = self.identifier_constant(&shut_up_borrow_checker);
@@ -521,11 +521,11 @@ impl Parser {
         {
             ty = FunctionType::Initializer;
         }
-        self.function(vm, ty);
+        self.function( ty);
         self.emit_bytes(OpCode::Method as u8, constant);
     }
 
-    unsafe fn class_declaration(&mut self, vm: &mut VM) {
+    unsafe fn class_declaration(&mut self) {
         self.consume(TokenType::Identifier, "Expect class name.");
         let class_name = self.previous;
         let shut_up_borrow_checker: Token = self.previous;
@@ -543,7 +543,7 @@ impl Parser {
 
         if self.mtch(TokenType::Less) {
             self.consume(TokenType::Identifier, "Expect superclass name.");
-            variable(self, vm, false);
+            variable(self, false);
 
             if identifiers_equal(&class_name, &self.previous) {
                 self.error("A class can't inherit from itself.");
@@ -554,15 +554,15 @@ impl Parser {
             self.add_local(shut_up_borrow_checker);
             self.define_variable( 0);
 
-            named_variable(self,vm, class_name, false);
+            named_variable(self, class_name, false);
             self.emit_byte( OpCode::Inherit as u8);
             class_compiler.has_superclass = true;
         }
 
-        named_variable(self, vm,class_name, false);
+        named_variable(self, class_name, false);
         self.consume(TokenType::LeftBrace, "Expect '{' before class body.");
         while !self.check(TokenType::RightBrace) && !self.check(TokenType::Eof) {
-            self.method(vm);
+            self.method();
         }
         self.consume(TokenType::RightBrace, "Expect '}' after class body.");
         self.emit_byte(OpCode::Pop as u8);
@@ -574,18 +574,18 @@ impl Parser {
         self.current_class = (*self.current_class).enclosing;
     }
 
-    unsafe fn fun_declaration(&mut self, vm: &mut VM) {
+    unsafe fn fun_declaration(&mut self) {
         let global = self.parse_variable("Expect function name.");
         self.mark_initialized();
-        self.function(vm, FunctionType::Function);
+        self.function( FunctionType::Function);
         self.define_variable( global);
     }
 
-    unsafe fn var_declaration(&mut self, vm: &mut VM) {
+    unsafe fn var_declaration(&mut self) {
         let global = self.parse_variable("Expect variable name.");
 
         if self.mtch(TokenType::Equal) {
-            self.expression(vm);
+            self.expression();
         } else {
             self.emit_byte( OpCode::Nil as u8);
         }
@@ -598,27 +598,27 @@ impl Parser {
         self.define_variable( global);
     }
 
-    unsafe fn expression_statement(&mut self, vm: &mut VM) {
-        self.expression(vm);
+    unsafe fn expression_statement(&mut self) {
+        self.expression();
         self.consume(TokenType::Semicolon, "Expect ';' after expression.");
         self.emit_byte( OpCode::Pop as u8);
     }
 
-    unsafe fn for_statement(&mut self, vm: &mut VM) {
+    unsafe fn for_statement(&mut self) {
         self.begin_scope();
 
         self.consume(TokenType::LeftParen, "Expect '(' after 'for'.");
         if self.mtch(TokenType::Semicolon) {
         } else if self.mtch(TokenType::Var) {
-            self.var_declaration(vm);
+            self.var_declaration();
         } else {
-            self.expression_statement(vm);
+            self.expression_statement();
         }
 
         let mut loop_start = (*self.current_chunk()).count;
         let mut exit_jump = None;
         if !self.mtch(TokenType::Semicolon) {
-            self.expression(vm);
+            self.expression();
             self.consume(TokenType::Semicolon, "Expect ';' after loop condition.");
 
             exit_jump = Some(self.emit_jump( OpCode::JumpIfFalse as u8));
@@ -628,7 +628,7 @@ impl Parser {
         if !self.mtch(TokenType::RightParen) {
             let body_jump = self.emit_jump( OpCode::Jump as u8);
             let increment_start = (*self.current_chunk()).count;
-            self.expression(vm);
+            self.expression();
             self.emit_byte( OpCode::Pop as u8);
             self.consume(TokenType::RightParen, "Expect ')' after for clauses.");
 
@@ -637,7 +637,7 @@ impl Parser {
             self.patch_jump(body_jump);
         }
 
-        self.statement(vm);
+        self.statement();
         self.emit_loop( loop_start);
 
         if let Some(exit_jump) = exit_jump {
@@ -648,33 +648,33 @@ impl Parser {
         self.end_scope();
     }
 
-    unsafe fn if_statement(&mut self, vm: &mut VM) {
+    unsafe fn if_statement(&mut self) {
         self.consume(TokenType::LeftParen, "Expect '(' after 'if'.");
-        self.expression(vm);
+        self.expression();
         self.consume(TokenType::RightParen, "Expect ')' after condition.");
 
         let then_jump = self.emit_jump( OpCode::JumpIfFalse as u8);
 
         self.emit_byte( OpCode::Pop as u8);
-        self.statement(vm);
+        self.statement();
         let else_jump = self.emit_jump( OpCode::Jump as u8);
 
         self.patch_jump(then_jump);
 
         self.emit_byte( OpCode::Pop as u8);
         if self.mtch(TokenType::Else) {
-            self.statement(vm)
+            self.statement()
         }
         self.patch_jump(else_jump);
     }
 
-    unsafe fn print_statement(&mut self, vm: &mut VM) {
-        self.expression(vm);
+    unsafe fn print_statement(&mut self) {
+        self.expression();
         self.consume(TokenType::Semicolon, "Expect ';' after value.");
         self.emit_byte( OpCode::Print as u8);
     }
 
-    unsafe fn return_statement(&mut self, vm: &mut VM) {
+    unsafe fn return_statement(&mut self) {
         if (*self.current_compiler).ty == FunctionType::Script {
             self.error("Can't return from top-level code.");
         }
@@ -686,22 +686,22 @@ impl Parser {
                 self.error("Can't return a value from an initializer.");
             }
 
-            self.expression(vm);
+            self.expression();
             self.consume(TokenType::Semicolon, "Expect ';' after return value.");
             self.emit_byte( OpCode::Return as u8);
         }
     }
 
-    unsafe fn while_statement(&mut self, vm: &mut VM) {
+    unsafe fn while_statement(&mut self) {
         let loop_start = (*self.current_chunk()).count;
 
         self.consume(TokenType::LeftParen, "Expect '(' after 'while'.");
-        self.expression(vm);
+        self.expression();
         self.consume(TokenType::RightParen, "Expect ')' after condition.");
 
         let exit_jump = self.emit_jump( OpCode::JumpIfFalse as u8);
         self.emit_byte( OpCode::Pop as u8);
-        self.statement(vm);
+        self.statement();
         self.emit_loop( loop_start);
 
         self.patch_jump(exit_jump);
@@ -731,15 +731,15 @@ impl Parser {
         }
     }
 
-    unsafe fn declaration(&mut self, vm: &mut VM) {
+    unsafe fn declaration(&mut self) {
         if self.mtch(TokenType::Class) {
-            self.class_declaration(vm);
+            self.class_declaration();
         } else if self.mtch(TokenType::Fun) {
-            self.fun_declaration(vm);
+            self.fun_declaration();
         } else if self.mtch(TokenType::Var) {
-            self.var_declaration(vm);
+            self.var_declaration();
         } else {
-            self.statement(vm);
+            self.statement();
         }
 
         if self.panic_mode {
@@ -747,28 +747,28 @@ impl Parser {
         }
     }
 
-    unsafe fn statement(&mut self, vm: &mut VM) {
+    unsafe fn statement(&mut self) {
         if self.mtch(TokenType::Print) {
-            self.print_statement(vm);
+            self.print_statement();
         } else if self.mtch(TokenType::For) {
-            self.for_statement(vm);
+            self.for_statement();
         } else if self.mtch(TokenType::If) {
-            self.if_statement(vm);
+            self.if_statement();
         } else if self.mtch(TokenType::Return) {
-            self.return_statement(vm);
+            self.return_statement();
         } else if self.mtch(TokenType::While) {
-            self.while_statement(vm);
+            self.while_statement();
         } else if self.mtch(TokenType::LeftBrace) {
             self.begin_scope();
-            self.block(vm);
+            self.block();
             self.end_scope();
         } else {
-            self.expression_statement(vm);
+            self.expression_statement();
         }
     }
 }
 
-pub unsafe fn compile(source: &str, vm: &mut VM) -> *mut ObjFunction {
+pub unsafe fn compile(source: &str) -> *mut ObjFunction {
     let mut scanner = Scanner::new(source);
 
     let mut parser = Parser {
@@ -797,7 +797,7 @@ pub unsafe fn compile(source: &str, vm: &mut VM) -> *mut ObjFunction {
     parser.advance();
 
     while !parser.mtch(TokenType::Eof) {
-        parser.declaration(vm);
+        parser.declaration();
     }
 
     let function = parser.end_compiler();
@@ -808,10 +808,10 @@ pub unsafe fn compile(source: &str, vm: &mut VM) -> *mut ObjFunction {
     }
 }
 
-unsafe fn binary(parser: &mut Parser, vm: &mut VM, _can_assign: bool) {
+unsafe fn binary(parser: &mut Parser, _can_assign: bool) {
     let operator_type = parser.previous.ty;
     let rule = get_rule(operator_type);
-    parser.parse_precedence(vm, mem::transmute((*rule).precedence as u8 + 1));
+    parser.parse_precedence(mem::transmute((*rule).precedence as u8 + 1));
 
     match operator_type {
         TokenType::BangEqual => parser.emit_bytes( OpCode::Equal as u8, OpCode::Not as u8),
@@ -828,21 +828,21 @@ unsafe fn binary(parser: &mut Parser, vm: &mut VM, _can_assign: bool) {
     }
 }
 
-unsafe fn call(parser: &mut Parser, vm: &mut VM, _can_assign: bool) {
-    let arg_count = parser.argument_list(vm);
+unsafe fn call(parser: &mut Parser, _can_assign: bool) {
+    let arg_count = parser.argument_list();
     parser.emit_bytes( OpCode::Call as u8, arg_count);
 }
 
-unsafe fn dot(parser: &mut Parser, vm: &mut VM, can_assign: bool) {
+unsafe fn dot(parser: &mut Parser, can_assign: bool) {
     parser.consume(TokenType::Identifier, "Expect property name after '.'.");
     let shut_up_borrow_checker = parser.previous;
     let name = parser.identifier_constant(&shut_up_borrow_checker);
 
     if can_assign && parser.mtch(TokenType::Equal) {
-        parser.expression(vm);
+        parser.expression();
         parser.emit_bytes(OpCode::SetProperty as u8, name);
     } else if parser.mtch(TokenType::LeftParen) {
-        let arg_count = parser.argument_list(vm);
+        let arg_count = parser.argument_list();
         parser.emit_bytes( OpCode::Invoke as u8, name);
         parser.emit_byte( arg_count);
     } else {
@@ -850,7 +850,7 @@ unsafe fn dot(parser: &mut Parser, vm: &mut VM, can_assign: bool) {
     }
 }
 
-unsafe fn literal(parser: &mut Parser, _vm: &mut VM, _can_assign: bool) {
+unsafe fn literal(parser: &mut Parser, _can_assign: bool) {
     match parser.previous.ty {
         TokenType::False => parser.emit_byte( OpCode::False as u8),
         TokenType::Nil => parser.emit_byte( OpCode::Nil as u8),
@@ -859,12 +859,12 @@ unsafe fn literal(parser: &mut Parser, _vm: &mut VM, _can_assign: bool) {
     }
 }
 
-unsafe fn grouping(parser: &mut Parser, vm: &mut VM, _can_assign: bool) {
-    parser.expression(vm);
+unsafe fn grouping(parser: &mut Parser, _can_assign: bool) {
+    parser.expression();
     parser.consume(TokenType::RightParen, "Expect ')' after expression.");
 }
 
-unsafe fn number(parser: &mut Parser, _vm: &mut VM, _can_assign: bool) {
+unsafe fn number(parser: &mut Parser, _can_assign: bool) {
     let value: f32 = str::from_utf8_unchecked(slice::from_raw_parts(
         parser.previous.start,
         parser.previous.length as usize,
@@ -874,18 +874,18 @@ unsafe fn number(parser: &mut Parser, _vm: &mut VM, _can_assign: bool) {
     parser.emit_constant(number_val(value as f64));
 }
 
-unsafe fn or(parser: &mut Parser, vm: &mut VM, _can_assign: bool) {
+unsafe fn or(parser: &mut Parser, _can_assign: bool) {
     let else_jump = parser.emit_jump( OpCode::JumpIfFalse as u8);
     let end_jump = parser.emit_jump( OpCode::Jump as u8);
 
     parser.patch_jump(else_jump);
     parser.emit_byte( OpCode::Pop as u8);
 
-    parser.parse_precedence( vm, Precedence::Or);
+    parser.parse_precedence(Precedence::Or);
     parser.patch_jump(end_jump);
 }
 
-unsafe fn string(parser: &mut Parser, vm: &mut VM, _can_assign: bool) {
+unsafe fn string(parser: &mut Parser, _can_assign: bool) {
     parser
         .emit_constant(
             obj_val(
@@ -893,11 +893,11 @@ unsafe fn string(parser: &mut Parser, vm: &mut VM, _can_assign: bool) {
         ));
 }
 
-unsafe fn list(parser: &mut Parser, vm: &mut VM, _can_assign: bool) {
+unsafe fn list(parser: &mut Parser, _can_assign: bool) {
     let mut count = 0;
     if !parser.check(TokenType::RightBracket) {
         loop {
-            parser.expression(vm);
+            parser.expression();
             if count == 255 {
                 parser.error("Can't have more than 255 elements in list initializer.");
             }
@@ -914,19 +914,19 @@ unsafe fn list(parser: &mut Parser, vm: &mut VM, _can_assign: bool) {
     parser.emit_bytes( OpCode::List as u8, count as u8);
 }
 
-unsafe fn index(parser: &mut Parser, vm: &mut VM, can_assign: bool) {
-    parser.expression(vm);
+unsafe fn index(parser: &mut Parser, can_assign: bool) {
+    parser.expression();
     parser.consume(TokenType::RightBracket, "Expect ']' after index operator.");
 
     if can_assign && parser.mtch(TokenType::Equal) {
-        parser.expression(vm);
+        parser.expression();
         unimplemented!("assign to []");
     } else {
         parser.emit_byte( OpCode::Index as u8);
     }
 }
 
-unsafe fn named_variable(parser: &mut Parser, vm: &mut VM, name: Token, can_assign: bool) {
+unsafe fn named_variable(parser: &mut Parser, name: Token, can_assign: bool) {
     let (get_op, set_op);
     let mut arg = parser.resolve_local(parser.current_compiler, &name);
     if arg != -1 {
@@ -947,15 +947,15 @@ unsafe fn named_variable(parser: &mut Parser, vm: &mut VM, name: Token, can_assi
     let arg = arg as u8;
 
     if can_assign && parser.mtch(TokenType::Equal) {
-        parser.expression(vm);
+        parser.expression();
         parser.emit_bytes( set_op as u8, arg);
     } else {
         parser.emit_bytes( get_op as u8, arg);
     }
 }
 
-unsafe fn variable(parser: &mut Parser, vm: &mut VM, can_assign: bool) {
-    named_variable(parser, vm, parser.previous, can_assign);
+unsafe fn variable(parser: &mut Parser, can_assign: bool) {
+    named_variable(parser, parser.previous, can_assign);
 }
 
 unsafe fn synthetic_token(parser: &mut Parser, text: &'static str) -> Token {
@@ -967,7 +967,7 @@ unsafe fn synthetic_token(parser: &mut Parser, text: &'static str) -> Token {
     }
 }
 
-unsafe fn super_(parser: &mut Parser, vm: &mut VM, _can_assign: bool) {
+unsafe fn super_(parser: &mut Parser, _can_assign: bool) {
     if parser.current_class == ptr::null_mut() {
         parser.error("Can't use 'super' outside of a class.");
     } else if !(*parser.current_class).has_superclass {
@@ -980,33 +980,33 @@ unsafe fn super_(parser: &mut Parser, vm: &mut VM, _can_assign: bool) {
     let name = parser.identifier_constant(&shut_up_borrow_checker);
 
     let shut_up_borrow_checker = synthetic_token(parser, "this");
-    named_variable(parser, vm, shut_up_borrow_checker, false);
+    named_variable(parser, shut_up_borrow_checker, false);
     if parser.mtch(TokenType::LeftParen) {
-        let arg_count = parser.argument_list(vm);
+        let arg_count = parser.argument_list();
         let shut_up_borrow_checker = synthetic_token(parser, "super");
-        named_variable(parser,vm, shut_up_borrow_checker, false);
+        named_variable(parser,shut_up_borrow_checker, false);
         parser.emit_bytes(OpCode::SuperInvoke as u8, name);
         parser.emit_byte(arg_count);
     } else {
         let shut_up_borrow_checker = synthetic_token(parser, "super");
-        named_variable(parser,vm, shut_up_borrow_checker, false);
+        named_variable(parser,shut_up_borrow_checker, false);
         parser.emit_bytes(OpCode::GetSuper as u8, name);
     }
 }
 
-unsafe fn this(parser: &mut Parser,vm: &mut VM, _can_assign: bool) {
+unsafe fn this(parser: &mut Parser,_can_assign: bool) {
     if parser.current_class == ptr::null_mut() {
         parser.error("Can't use 'this' outside of a class.");
         return;
     }
 
-    variable(parser, vm, false);
+    variable(parser, false);
 }
 
-unsafe fn unary(parser: &mut Parser, vm: &mut VM, _can_assign: bool) {
+unsafe fn unary(parser: &mut Parser, _can_assign: bool) {
     let ty = parser.previous.ty;
 
-    parser.parse_precedence(vm, Precedence::Unary);
+    parser.parse_precedence(Precedence::Unary);
 
     match ty {
         TokenType::Bang => parser.emit_byte(OpCode::Not as u8),
@@ -1015,11 +1015,11 @@ unsafe fn unary(parser: &mut Parser, vm: &mut VM, _can_assign: bool) {
     }
 }
 
-unsafe fn and(parser: &mut Parser,vm: &mut VM, _can_assign: bool) {
+unsafe fn and(parser: &mut Parser, _can_assign: bool) {
     let end_jump = parser.emit_jump(OpCode::JumpIfFalse as u8);
 
     parser.emit_byte(OpCode::Pop as u8);
-    parser.parse_precedence(vm,Precedence::And);
+    parser.parse_precedence(Precedence::And);
 
     parser.patch_jump(end_jump);
 }
