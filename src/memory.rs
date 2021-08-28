@@ -178,11 +178,11 @@ pub unsafe fn gc_find_interned(chars: *const u8, length: i32, hash: u32) -> *mut
     table_find_string(&mut GC.strings, chars, length, hash)
 }
 
-pub unsafe fn mark_object(object: *mut Obj) {
+pub fn mark_object(object: *mut Obj) {
     if object == ptr::null_mut() {
         return;
     }
-    if (*object).is_marked {
+    if unsafe { (*object).is_marked } {
         return;
     }
 
@@ -193,20 +193,20 @@ pub unsafe fn mark_object(object: *mut Obj) {
         println!();
     }
 
-    (*object).is_marked = true;
+    unsafe { (*object).is_marked = true; }
 
-    GC.gray_stack.push(object);
+    unsafe { GC.gray_stack.push(object); }
 }
 
-pub unsafe fn mark_value(value: Value) {
+pub fn mark_value(value: Value) {
     if is_obj(value) {
         mark_object(as_obj(value));
     }
 }
 
-unsafe fn mark_array(array: *mut ValueArray) {
-    for i in 0..(*array).count {
-        mark_value(*(*array).values.offset(i as isize));
+fn mark_array(array: *mut ValueArray) {
+    for i in 0..unsafe { (*array).count } {
+        mark_value(unsafe { *(*array).values.offset(i as isize) });
     }
 }
 
