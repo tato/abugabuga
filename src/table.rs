@@ -3,7 +3,11 @@ use std::{
     slice,
 };
 
-use crate::{memory::{mark_object, mark_value}, object::{Obj, ObjString}, value::{bool_val, is_nil, Value, NIL_VAL}};
+use crate::{
+    memory::{mark_object, mark_value},
+    object::{Obj, ObjString},
+    value::{bool_val, is_nil, Value, NIL_VAL},
+};
 
 const TABLE_MAX_LOAD: f32 = 0.75;
 

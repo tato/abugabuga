@@ -1,6 +1,12 @@
 use std::ptr;
 
-use crate::{memory::{gc_track_constant_for_chunk_or_strings_table, gc_untrack_constant_for_chunk_or_strings_table}, value::{free_value_array, init_value_array, write_value_array, Value, ValueArray}};
+use crate::{
+    memory::{
+        gc_track_constant_for_chunk_or_strings_table,
+        gc_untrack_constant_for_chunk_or_strings_table,
+    },
+    value::{free_value_array, init_value_array, write_value_array, Value, ValueArray},
+};
 
 pub enum OpCode {
     Constant,

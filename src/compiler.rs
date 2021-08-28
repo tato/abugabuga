@@ -1,6 +1,13 @@
 use std::{mem, ptr, slice, str, u8};
 
-use crate::{UINT8_COUNT, chunk::{add_constant, write_chunk, Chunk, OpCode}, memory::mark_object, object::{copy_string, new_function, Obj, ObjFunction}, scanner::{Scanner, Token, TokenType}, value::{number_val, obj_val, Value}};
+use crate::{
+    chunk::{add_constant, write_chunk, Chunk, OpCode},
+    memory::mark_object,
+    object::{copy_string, new_function, Obj, ObjFunction},
+    scanner::{Scanner, Token, TokenType},
+    value::{number_val, obj_val, Value},
+    UINT8_COUNT,
+};
 
 #[cfg(feature = "debug_print_code")]
 use crate::debug::disassemble_chunk;
@@ -431,7 +438,7 @@ impl Parser {
             (*self.current_compiler).scope_depth;
     }
 
-    unsafe fn define_variable(&mut self,  global: u8) {
+    unsafe fn define_variable(&mut self, global: u8) {
         if (*self.current_compiler).scope_depth > 0 {
             self.mark_initialized();
             return; // runtime NOP, keep initializer temporary on top of the stack
@@ -495,10 +502,7 @@ impl Parser {
 
         let function = self.end_compiler();
         let shut_up_borrow_checker = self.make_constant(obj_val(function as *mut Obj));
-        self.emit_bytes(
-            OpCode::Closure as u8,
-            shut_up_borrow_checker,
-        );
+        self.emit_bytes(OpCode::Closure as u8, shut_up_borrow_checker);
 
         for i in 0..(*function).upvalue_count {
             self.emit_byte(if compiler.upvalues[i as usize].is_local {
@@ -521,7 +525,7 @@ impl Parser {
         {
             ty = FunctionType::Initializer;
         }
-        self.function( ty);
+        self.function(ty);
         self.emit_bytes(OpCode::Method as u8, constant);
     }
 
@@ -552,10 +556,10 @@ impl Parser {
             self.begin_scope();
             let shut_up_borrow_checker = synthetic_token(self, "super");
             self.add_local(shut_up_borrow_checker);
-            self.define_variable( 0);
+            self.define_variable(0);
 
             named_variable(self, class_name, false);
-            self.emit_byte( OpCode::Inherit as u8);
+            self.emit_byte(OpCode::Inherit as u8);
             class_compiler.has_superclass = true;
         }
 
@@ -577,8 +581,8 @@ impl Parser {
     unsafe fn fun_declaration(&mut self) {
         let global = self.parse_variable("Expect function name.");
         self.mark_initialized();
-        self.function( FunctionType::Function);
-        self.define_variable( global);
+        self.function(FunctionType::Function);
+        self.define_variable(global);
     }
 
     unsafe fn var_declaration(&mut self) {
@@ -587,7 +591,7 @@ impl Parser {
         if self.mtch(TokenType::Equal) {
             self.expression();
         } else {
-            self.emit_byte( OpCode::Nil as u8);
+            self.emit_byte(OpCode::Nil as u8);
         }
 
         self.consume(
@@ -595,13 +599,13 @@ impl Parser {
             "Expect ';' after variable declaration.",
         );
 
-        self.define_variable( global);
+        self.define_variable(global);
     }
 
     unsafe fn expression_statement(&mut self) {
         self.expression();
         self.consume(TokenType::Semicolon, "Expect ';' after expression.");
-        self.emit_byte( OpCode::Pop as u8);
+        self.emit_byte(OpCode::Pop as u8);
     }
 
     unsafe fn for_statement(&mut self) {
@@ -621,28 +625,28 @@ impl Parser {
             self.expression();
             self.consume(TokenType::Semicolon, "Expect ';' after loop condition.");
 
-            exit_jump = Some(self.emit_jump( OpCode::JumpIfFalse as u8));
-            self.emit_byte( OpCode::Pop as u8);
+            exit_jump = Some(self.emit_jump(OpCode::JumpIfFalse as u8));
+            self.emit_byte(OpCode::Pop as u8);
         }
 
         if !self.mtch(TokenType::RightParen) {
-            let body_jump = self.emit_jump( OpCode::Jump as u8);
+            let body_jump = self.emit_jump(OpCode::Jump as u8);
             let increment_start = (*self.current_chunk()).count;
             self.expression();
-            self.emit_byte( OpCode::Pop as u8);
+            self.emit_byte(OpCode::Pop as u8);
             self.consume(TokenType::RightParen, "Expect ')' after for clauses.");
 
-            self.emit_loop( loop_start);
+            self.emit_loop(loop_start);
             loop_start = increment_start;
             self.patch_jump(body_jump);
         }
 
         self.statement();
-        self.emit_loop( loop_start);
+        self.emit_loop(loop_start);
 
         if let Some(exit_jump) = exit_jump {
             self.patch_jump(exit_jump);
-            self.emit_byte( OpCode::Pop as u8);
+            self.emit_byte(OpCode::Pop as u8);
         }
 
         self.end_scope();
@@ -653,15 +657,15 @@ impl Parser {
         self.expression();
         self.consume(TokenType::RightParen, "Expect ')' after condition.");
 
-        let then_jump = self.emit_jump( OpCode::JumpIfFalse as u8);
+        let then_jump = self.emit_jump(OpCode::JumpIfFalse as u8);
 
-        self.emit_byte( OpCode::Pop as u8);
+        self.emit_byte(OpCode::Pop as u8);
         self.statement();
-        let else_jump = self.emit_jump( OpCode::Jump as u8);
+        let else_jump = self.emit_jump(OpCode::Jump as u8);
 
         self.patch_jump(then_jump);
 
-        self.emit_byte( OpCode::Pop as u8);
+        self.emit_byte(OpCode::Pop as u8);
         if self.mtch(TokenType::Else) {
             self.statement()
         }
@@ -671,7 +675,7 @@ impl Parser {
     unsafe fn print_statement(&mut self) {
         self.expression();
         self.consume(TokenType::Semicolon, "Expect ';' after value.");
-        self.emit_byte( OpCode::Print as u8);
+        self.emit_byte(OpCode::Print as u8);
     }
 
     unsafe fn return_statement(&mut self) {
@@ -688,7 +692,7 @@ impl Parser {
 
             self.expression();
             self.consume(TokenType::Semicolon, "Expect ';' after return value.");
-            self.emit_byte( OpCode::Return as u8);
+            self.emit_byte(OpCode::Return as u8);
         }
     }
 
@@ -699,13 +703,13 @@ impl Parser {
         self.expression();
         self.consume(TokenType::RightParen, "Expect ')' after condition.");
 
-        let exit_jump = self.emit_jump( OpCode::JumpIfFalse as u8);
-        self.emit_byte( OpCode::Pop as u8);
+        let exit_jump = self.emit_jump(OpCode::JumpIfFalse as u8);
+        self.emit_byte(OpCode::Pop as u8);
         self.statement();
-        self.emit_loop( loop_start);
+        self.emit_loop(loop_start);
 
         self.patch_jump(exit_jump);
-        self.emit_byte( OpCode::Pop as u8);
+        self.emit_byte(OpCode::Pop as u8);
     }
 
     unsafe fn synchronize(&mut self) {
@@ -814,23 +818,23 @@ unsafe fn binary(parser: &mut Parser, _can_assign: bool) {
     parser.parse_precedence(mem::transmute((*rule).precedence as u8 + 1));
 
     match operator_type {
-        TokenType::BangEqual => parser.emit_bytes( OpCode::Equal as u8, OpCode::Not as u8),
-        TokenType::EqualEqual => parser.emit_byte( OpCode::Equal as u8),
-        TokenType::Greater => parser.emit_byte( OpCode::Greater as u8),
-        TokenType::GreaterEqual => parser.emit_bytes( OpCode::Less as u8, OpCode::Not as u8),
-        TokenType::Less => parser.emit_byte( OpCode::Less as u8),
-        TokenType::LessEqual => parser.emit_bytes( OpCode::Greater as u8, OpCode::Not as u8),
-        TokenType::Plus => parser.emit_byte( OpCode::Add as u8),
-        TokenType::Minus => parser.emit_byte( OpCode::Subtract as u8),
-        TokenType::Star => parser.emit_byte( OpCode::Multiply as u8),
-        TokenType::Slash => parser.emit_byte( OpCode::Divide as u8),
+        TokenType::BangEqual => parser.emit_bytes(OpCode::Equal as u8, OpCode::Not as u8),
+        TokenType::EqualEqual => parser.emit_byte(OpCode::Equal as u8),
+        TokenType::Greater => parser.emit_byte(OpCode::Greater as u8),
+        TokenType::GreaterEqual => parser.emit_bytes(OpCode::Less as u8, OpCode::Not as u8),
+        TokenType::Less => parser.emit_byte(OpCode::Less as u8),
+        TokenType::LessEqual => parser.emit_bytes(OpCode::Greater as u8, OpCode::Not as u8),
+        TokenType::Plus => parser.emit_byte(OpCode::Add as u8),
+        TokenType::Minus => parser.emit_byte(OpCode::Subtract as u8),
+        TokenType::Star => parser.emit_byte(OpCode::Multiply as u8),
+        TokenType::Slash => parser.emit_byte(OpCode::Divide as u8),
         _ => return, // unreachable
     }
 }
 
 unsafe fn call(parser: &mut Parser, _can_assign: bool) {
     let arg_count = parser.argument_list();
-    parser.emit_bytes( OpCode::Call as u8, arg_count);
+    parser.emit_bytes(OpCode::Call as u8, arg_count);
 }
 
 unsafe fn dot(parser: &mut Parser, can_assign: bool) {
@@ -843,18 +847,18 @@ unsafe fn dot(parser: &mut Parser, can_assign: bool) {
         parser.emit_bytes(OpCode::SetProperty as u8, name);
     } else if parser.mtch(TokenType::LeftParen) {
         let arg_count = parser.argument_list();
-        parser.emit_bytes( OpCode::Invoke as u8, name);
-        parser.emit_byte( arg_count);
+        parser.emit_bytes(OpCode::Invoke as u8, name);
+        parser.emit_byte(arg_count);
     } else {
-        parser.emit_bytes( OpCode::GetProperty as u8, name);
+        parser.emit_bytes(OpCode::GetProperty as u8, name);
     }
 }
 
 unsafe fn literal(parser: &mut Parser, _can_assign: bool) {
     match parser.previous.ty {
-        TokenType::False => parser.emit_byte( OpCode::False as u8),
-        TokenType::Nil => parser.emit_byte( OpCode::Nil as u8),
-        TokenType::True => parser.emit_byte( OpCode::True as u8),
+        TokenType::False => parser.emit_byte(OpCode::False as u8),
+        TokenType::Nil => parser.emit_byte(OpCode::Nil as u8),
+        TokenType::True => parser.emit_byte(OpCode::True as u8),
         _ => return, // unreachable
     }
 }
@@ -875,11 +879,11 @@ unsafe fn number(parser: &mut Parser, _can_assign: bool) {
 }
 
 unsafe fn or(parser: &mut Parser, _can_assign: bool) {
-    let else_jump = parser.emit_jump( OpCode::JumpIfFalse as u8);
-    let end_jump = parser.emit_jump( OpCode::Jump as u8);
+    let else_jump = parser.emit_jump(OpCode::JumpIfFalse as u8);
+    let end_jump = parser.emit_jump(OpCode::Jump as u8);
 
     parser.patch_jump(else_jump);
-    parser.emit_byte( OpCode::Pop as u8);
+    parser.emit_byte(OpCode::Pop as u8);
 
     parser.parse_precedence(Precedence::Or);
     parser.patch_jump(end_jump);
@@ -887,8 +891,7 @@ unsafe fn or(parser: &mut Parser, _can_assign: bool) {
 
 unsafe fn string(parser: &mut Parser, _can_assign: bool) {
     parser
-        .emit_constant(
-            obj_val(
+        .emit_constant(obj_val(
             copy_string(parser.previous.start.add(1), parser.previous.length - 2) as *mut Obj,
         ));
 }
@@ -911,7 +914,7 @@ unsafe fn list(parser: &mut Parser, _can_assign: bool) {
         TokenType::RightBracket,
         "Expect ']' after list initializer.",
     );
-    parser.emit_bytes( OpCode::List as u8, count as u8);
+    parser.emit_bytes(OpCode::List as u8, count as u8);
 }
 
 unsafe fn index(parser: &mut Parser, can_assign: bool) {
@@ -922,7 +925,7 @@ unsafe fn index(parser: &mut Parser, can_assign: bool) {
         parser.expression();
         unimplemented!("assign to []");
     } else {
-        parser.emit_byte( OpCode::Index as u8);
+        parser.emit_byte(OpCode::Index as u8);
     }
 }
 
@@ -948,9 +951,9 @@ unsafe fn named_variable(parser: &mut Parser, name: Token, can_assign: bool) {
 
     if can_assign && parser.mtch(TokenType::Equal) {
         parser.expression();
-        parser.emit_bytes( set_op as u8, arg);
+        parser.emit_bytes(set_op as u8, arg);
     } else {
-        parser.emit_bytes( get_op as u8, arg);
+        parser.emit_bytes(get_op as u8, arg);
     }
 }
 
@@ -984,17 +987,17 @@ unsafe fn super_(parser: &mut Parser, _can_assign: bool) {
     if parser.mtch(TokenType::LeftParen) {
         let arg_count = parser.argument_list();
         let shut_up_borrow_checker = synthetic_token(parser, "super");
-        named_variable(parser,shut_up_borrow_checker, false);
+        named_variable(parser, shut_up_borrow_checker, false);
         parser.emit_bytes(OpCode::SuperInvoke as u8, name);
         parser.emit_byte(arg_count);
     } else {
         let shut_up_borrow_checker = synthetic_token(parser, "super");
-        named_variable(parser,shut_up_borrow_checker, false);
+        named_variable(parser, shut_up_borrow_checker, false);
         parser.emit_bytes(OpCode::GetSuper as u8, name);
     }
 }
 
-unsafe fn this(parser: &mut Parser,_can_assign: bool) {
+unsafe fn this(parser: &mut Parser, _can_assign: bool) {
     if parser.current_class == ptr::null_mut() {
         parser.error("Can't use 'this' outside of a class.");
         return;

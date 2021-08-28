@@ -1,15 +1,23 @@
 use std::{ptr, slice, str};
 
-use crate::{chunk::{init_chunk, Chunk}, memory::{gc_find_interned, gc_intern_string, gc_track_constant_for_chunk_or_strings_table, gc_track_object, gc_untrack_constant_for_chunk_or_strings_table, reallocate}, table::{init_table, Table}, value::{as_obj, is_obj, obj_val, print_value, Value, NIL_VAL}};
+use crate::{
+    chunk::{init_chunk, Chunk},
+    memory::{
+        gc_find_interned, gc_intern_string, gc_track_constant_for_chunk_or_strings_table,
+        gc_track_object, gc_untrack_constant_for_chunk_or_strings_table, reallocate,
+    },
+    table::{init_table, Table},
+    value::{as_obj, is_obj, obj_val, print_value, Value, NIL_VAL},
+};
 
 macro_rules! allocate_obj {
     ($t:ty, $obj_type:expr) => {
-        allocate_object(std::mem::size_of::<$t>(), $obj_type) as *mut $t
+        allocate_object(std::mem::size_of::<$t>(), std::mem::align_of::<$t>(), $obj_type) as *mut $t
     };
 }
 
-unsafe fn allocate_object(size: usize, ty: ObjType) -> *mut Obj {
-    let object = reallocate(ptr::null_mut(), 0, size) as *mut Obj;
+unsafe fn allocate_object(size: usize, align: usize, ty: ObjType) -> *mut Obj {
+    let object = reallocate(ptr::null_mut(), 0, size, align) as *mut Obj;
     (*object).ty = ty;
     (*object).is_marked = false;
     (*object).next = gc_track_object(object);

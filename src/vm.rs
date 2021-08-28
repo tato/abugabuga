@@ -3,15 +3,22 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use crate::{chunk::OpCode, compiler::{Parser, compile}, memory::free_objects, object::{
+use crate::{
+    chunk::OpCode,
+    compiler::{compile, Parser},
+    memory::free_objects,
+    object::{
         as_bound_method, as_class, as_closure, as_function, as_instance, as_list, as_native,
         as_string, copy_string, is_class, is_instance, is_list, is_string, new_bound_method,
         new_class, new_closure, new_instance, new_list, new_native, new_upvalue, obj_type,
         take_string, NativeFn, Obj, ObjClass, ObjClosure, ObjString, ObjType, ObjUpvalue,
-    }, table::{free_table, init_table, table_add_all, table_delete, table_get, table_set, Table}, value::{
+    },
+    table::{free_table, init_table, table_add_all, table_delete, table_get, table_set, Table},
+    value::{
         as_bool, as_number, bool_val, is_bool, is_nil, is_number, is_obj, number_val, obj_val,
         print_value, values_equal, Value, NIL_VAL,
-    }};
+    },
+};
 
 #[cfg(feature = "debug_trace_execution")]
 use crate::debug::disassemble_instruction;
@@ -65,7 +72,6 @@ unsafe fn sqrt_native(arg_count: i32, args: *mut Value) -> Value {
     return number_val(as_number(*args).sqrt());
 }
 
-    
 unsafe fn _runtime_error(vm: &mut VM) {
     for i in (0..vm.frame_count).rev() {
         let frame = &mut vm.frames[i as usize];
@@ -116,12 +122,12 @@ impl VM {
     pub unsafe fn init(&mut self) {
         let vm = self;
         vm.reset_stack();
-    
+
         init_table(&mut vm.globals);
-    
+
         vm.init_string = ptr::null_mut();
         vm.init_string = copy_string("init".as_ptr(), 4);
-    
+
         vm.define_native("clock", clock_native);
         vm.define_native("sqrt", sqrt_native);
     }
@@ -132,7 +138,6 @@ impl VM {
         self.open_upvalues = ptr::null_mut();
     }
 
-    
     unsafe fn define_native(&mut self, name: &str, function: NativeFn) {
         self.push(obj_val(
             copy_string(name.as_ptr(), name.len() as i32) as *mut Obj
@@ -147,16 +152,16 @@ impl VM {
         *self.stack_top = value;
         self.stack_top = self.stack_top.add(1);
     }
-    
+
     pub unsafe fn pop(&mut self) -> Value {
         self.stack_top = self.stack_top.sub(1);
         *self.stack_top
     }
-    
+
     unsafe fn peek(&mut self, distance: isize) -> Value {
         *self.stack_top.offset(-1 - distance)
     }
-    
+
     unsafe fn call(&mut self, closure: *mut ObjClosure, arg_count: i32) -> bool {
         if arg_count != (*(*closure).function).arity {
             runtime_error!(
@@ -167,12 +172,12 @@ impl VM {
             );
             return false;
         }
-    
+
         if self.frame_count as usize >= FRAMES_MAX {
             runtime_error!(self, "Stack overflow.");
             return false;
         }
-    
+
         let frame = &mut self.frames[self.frame_count as usize];
         self.frame_count += 1;
         frame.closure = closure;
@@ -180,7 +185,7 @@ impl VM {
         frame.slots = self.stack_top.sub(arg_count as usize).sub(1);
         true
     }
-    
+
     unsafe fn call_value(&mut self, callee: Value, arg_count: i32) -> bool {
         if is_obj(callee) {
             match obj_type(callee) {
@@ -216,8 +221,13 @@ impl VM {
         runtime_error!(self, "Can only call functions and classes.");
         false
     }
-    
-    unsafe fn invoke_from_class(&mut self, class: *mut ObjClass, name: *mut ObjString, arg_count: i32) -> bool {
+
+    unsafe fn invoke_from_class(
+        &mut self,
+        class: *mut ObjClass,
+        name: *mut ObjString,
+        arg_count: i32,
+    ) -> bool {
         let mut method = NIL_VAL;
         if !table_get(&mut (*class).methods, name, &mut method) {
             runtime_error!(self, "Undefined property '{}'.", "name->chars"); // todo
@@ -225,39 +235,39 @@ impl VM {
         }
         self.call(as_closure(method), arg_count)
     }
-    
+
     unsafe fn invoke(&mut self, name: *mut ObjString, arg_count: i32) -> bool {
         let receiver = self.peek(arg_count as isize);
-    
+
         if !is_instance(receiver) {
             runtime_error!(self, "Only instances have methods.");
             return false;
         }
-    
+
         let instance = as_instance(receiver);
-    
+
         let mut value = NIL_VAL;
         if table_get(&mut (*instance).fields, name, &mut value) {
             *self.stack_top.offset(-arg_count as isize - 1) = value;
             return self.call_value(value, arg_count);
         }
-    
+
         self.invoke_from_class((*instance).class, name, arg_count)
     }
-    
+
     unsafe fn bind_method(&mut self, class: *mut ObjClass, name: *mut ObjString) -> bool {
         let mut method = NIL_VAL;
         if !table_get(&mut (*class).methods, name, &mut method) {
             runtime_error!(self, "Undefined property '{}'.", "name->chars");
             return false;
         }
-    
+
         let bound = new_bound_method(self.peek(0), as_closure(method));
         self.pop();
         self.push(obj_val(bound as *mut Obj));
         true
     }
-    
+
     unsafe fn capture_upvalue(&mut self, local: *mut Value) -> *mut ObjUpvalue {
         let mut prev_upvalue = ptr::null_mut();
         let mut upvalue = self.open_upvalues;
@@ -268,19 +278,19 @@ impl VM {
         if upvalue != ptr::null_mut() && (*upvalue).location == local {
             return upvalue;
         }
-    
+
         let created_upvalue = new_upvalue(local);
         (*created_upvalue).next = upvalue;
-    
+
         if prev_upvalue == ptr::null_mut() {
-self.open_upvalues = created_upvalue;
+            self.open_upvalues = created_upvalue;
         } else {
             (*prev_upvalue).next = created_upvalue;
         }
-    
+
         return created_upvalue;
     }
-    
+
     unsafe fn close_upvalues(&mut self, last: *mut Value) {
         while self.open_upvalues != ptr::null_mut() && (*self.open_upvalues).location >= last {
             let upvalue = self.open_upvalues;
@@ -289,33 +299,33 @@ self.open_upvalues = created_upvalue;
             self.open_upvalues = (*upvalue).next;
         }
     }
-    
+
     unsafe fn define_method(&mut self, name: *mut ObjString) {
         let method = self.peek(0);
         let class = as_class(self.peek(1));
         table_set(&mut (*class).methods, name, method);
         self.pop();
     }
-    
+
     unsafe fn concatenate(&mut self) {
         let b = &*as_string(self.peek(0));
         let a = &*as_string(self.peek(1));
-    
+
         let length = a.length + b.length;
-        let chars = allocate!( u8, length + 1);
+        let chars = allocate!(u8, length + 1);
         ptr::copy_nonoverlapping(a.chars, chars, a.length as usize);
         ptr::copy_nonoverlapping(b.chars, chars.offset(a.length as isize), b.length as usize);
         *chars.offset(length as isize) = 0;
-    
+
         let result = take_string(chars, length);
         self.pop();
         self.pop();
         self.push(obj_val(mem::transmute(result)));
     }
-    
+
     unsafe fn run(&mut self) -> InterpretResult {
         let mut frame: *mut CallFrame = &mut self.frames[self.frame_count as usize - 1];
-    
+
         macro_rules! read_byte {
             () => {{
                 let v = *(*frame).ip;
@@ -356,7 +366,7 @@ self.open_upvalues = created_upvalue;
                 self.push($value_type(a $op b));
             }}
         }
-    
+
         loop {
             #[cfg(feature = "debug_trace_execution")]
             {
@@ -373,10 +383,11 @@ self.open_upvalues = created_upvalue;
                     &mut (*(*frame.closure).function).chunk,
                     frame
                         .ip
-                        .sub((*(*frame.closure).function).chunk.code as usize) as i32,
+                        .sub((*(*frame.closure).function).chunk.code as usize)
+                        as i32,
                 );
             }
-    
+
             let instruction = read_byte!();
             match instruction {
                 i if i == OpCode::Constant as u8 => {
@@ -463,10 +474,10 @@ self.open_upvalues = created_upvalue;
                         runtime_error!(self, "Only instances have properties.");
                         return InterpretResult::RuntimeError;
                     }
-    
+
                     let instance = as_instance(self.peek(0));
                     let name = read_string!();
-    
+
                     let mut value = NIL_VAL;
                     if table_get(&mut (*instance).fields, name, &mut value) {
                         self.pop();
@@ -480,7 +491,7 @@ self.open_upvalues = created_upvalue;
                         runtime_error!(self, "Only instances have fields.");
                         return InterpretResult::RuntimeError;
                     }
-    
+
                     let instance = as_instance(self.peek(1));
                     table_set(&mut (*instance).fields, read_string!(), self.peek(0));
                     let value = self.pop();
@@ -490,7 +501,7 @@ self.open_upvalues = created_upvalue;
                 i if i == OpCode::GetSuper as u8 => {
                     let name = read_string!();
                     let superclass = as_class(self.pop());
-    
+
                     if !self.bind_method(superclass, name) {
                         return InterpretResult::RuntimeError;
                     }
@@ -500,15 +511,15 @@ self.open_upvalues = created_upvalue;
                         runtime_error!(self, "Indexed value must be a list.");
                         return InterpretResult::RuntimeError;
                     }
-    
+
                     if !is_number(self.peek(0)) {
                         runtime_error!(self, "Index expression must be a number.");
                         return InterpretResult::RuntimeError;
                     }
-    
+
                     let index = as_number(self.pop());
                     let list = as_list(self.pop());
-    
+
                     let val = (*list).items[index as usize];
                     self.push(val);
                 }
@@ -522,10 +533,10 @@ self.open_upvalues = created_upvalue;
                 i if i == OpCode::Not as u8 => {
                     let shut_up_borrow_checker = self.pop();
                     self.push(bool_val(is_falsey(shut_up_borrow_checker)))
-                },
+                }
                 i if i == OpCode::Negate as u8 => {
                     if !is_number(self.peek(0)) {
-                        runtime_error!(self,"Operand must be a number.");
+                        runtime_error!(self, "Operand must be a number.");
                         return InterpretResult::RuntimeError;
                     }
                     let shut_up_borrow_checker = self.pop();
@@ -643,10 +654,9 @@ self.open_upvalues = created_upvalue;
                 _ => break,
             }
         }
-    
+
         InterpretResult::RuntimeError
     }
-    
 
     pub unsafe fn interpret(&mut self, source: &str) -> InterpretResult {
         let function = compile(source);
@@ -675,7 +685,6 @@ impl Drop for VM {
         }
     }
 }
-
 
 unsafe fn is_falsey(value: Value) -> bool {
     is_nil(value) || (is_bool(value) && !as_bool(value))

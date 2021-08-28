@@ -1,6 +1,16 @@
-use std::{ffi::c_void, ptr, vec};
+use std::{alloc, ffi::c_void, ptr, vec};
 
-use crate::{chunk::free_chunk, compiler::Parser, object::{Obj, ObjBoundMethod, ObjClass, ObjClosure, ObjFunction, ObjInstance, ObjList, ObjNative, ObjString, ObjType, ObjUpvalue}, table::{Table, free_table, mark_table, table_find_string, table_remove_white, table_set}, value::{NIL_VAL, Value, ValueArray, as_obj, is_obj}, vm::VM};
+use crate::{
+    chunk::free_chunk,
+    compiler::Parser,
+    object::{
+        Obj, ObjBoundMethod, ObjClass, ObjClosure, ObjFunction, ObjInstance, ObjList, ObjNative,
+        ObjString, ObjType, ObjUpvalue,
+    },
+    table::{free_table, mark_table, table_find_string, table_remove_white, table_set, Table},
+    value::{as_obj, is_obj, Value, ValueArray, NIL_VAL},
+    vm::VM,
+};
 
 #[cfg(feature = "debug_log_gc")]
 use crate::value::{obj_val, print_value};
@@ -11,6 +21,7 @@ macro_rules! allocate {
             std::ptr::null_mut(),
             0,
             std::mem::size_of::<$t>() * $count as usize,
+            std::mem::align_of::<$t>(),
         ) as *mut $t
     };
 }
@@ -21,6 +32,7 @@ macro_rules! free {
             $pointer as *mut std::ffi::c_void,
             std::mem::size_of::<$t>(),
             0,
+            std::mem::align_of::<$t>(),
         )
     };
 }
@@ -41,6 +53,7 @@ macro_rules! grow_array {
             $pointer as *mut std::ffi::c_void,
             std::mem::size_of::<$t>() * $old_count as usize,
             std::mem::size_of::<$t>() * $new_count as usize,
+            std::mem::align_of::<$t>(),
         ) as *mut $t
     };
 }
@@ -51,6 +64,7 @@ macro_rules! free_array {
             $pointer as *mut std::ffi::c_void,
             std::mem::size_of::<$t>() * $old_count as usize,
             0,
+            std::mem::align_of::<$t>(),
         )
     };
 }
@@ -65,7 +79,7 @@ pub struct GarbageCollector {
     objects: *mut Obj,
     gray_stack: Vec<*mut Obj>,
 }
-pub static mut GC: GarbageCollector = GarbageCollector{ 
+pub static mut GC: GarbageCollector = GarbageCollector {
     vm: ptr::null_mut(),
     bytes_allocated: 0,
     next_gc: 1024 * 1024,
@@ -78,11 +92,18 @@ pub static mut GC: GarbageCollector = GarbageCollector{
     gray_stack: vec![],
 };
 
-pub unsafe fn reallocate(pointer: *mut c_void, old_size: usize, new_size: usize) -> *mut c_void {
+pub fn reallocate(
+    pointer: *mut c_void,
+    old_size: usize,
+    new_size: usize,
+    align: usize,
+) -> *mut c_void {
+    let gc = unsafe { &mut GC };
+
     if new_size > old_size {
-        GC.bytes_allocated += new_size - old_size;
+        gc.bytes_allocated += new_size - old_size;
     } else {
-        GC.bytes_allocated -= old_size - new_size;
+        gc.bytes_allocated -= old_size - new_size;
     }
 
     if new_size > old_size {
@@ -91,19 +112,44 @@ pub unsafe fn reallocate(pointer: *mut c_void, old_size: usize, new_size: usize)
             collect_garbage();
         }
 
-        if GC.bytes_allocated > GC.next_gc {
-            collect_garbage();
+        if gc.bytes_allocated > gc.next_gc {
+            unsafe { collect_garbage() };
         }
     }
+
+    if pointer == ptr::null_mut() {
+        let layout = alloc::Layout::from_size_align(new_size, align).unwrap();
+        let result = unsafe { alloc::alloc(layout) };
+        assert!(
+            result != ptr::null_mut(),
+            "reallocate(pointer = {:?}, old_size = {}, new_size = {}, align = {}) -> {:?}",
+            pointer,
+            old_size,
+            new_size,
+            align,
+            result
+        );
+        return result as *mut c_void;
+    }
+
+    let layout = alloc::Layout::from_size_align(old_size, align).unwrap();
     if new_size == 0 {
-        let _free = Vec::<u8>::from_raw_parts(pointer as *mut u8, old_size, old_size);
+        unsafe {
+            alloc::dealloc(pointer as *mut u8, layout);
+        }
         return ptr::null_mut();
     }
 
-    let result = vec![0u8; new_size].leak().as_mut_ptr();
-    if !pointer.is_null() {
-        ptr::copy(pointer as *mut u8, result, old_size);
-    }
+    let result = unsafe { alloc::realloc(pointer as *mut u8, layout, new_size) };
+    assert!(
+        result != ptr::null_mut(),
+        "reallocate(pointer = {:?}, old_size = {}, new_size = {}, align = {}) -> {:?}",
+        pointer,
+        old_size,
+        new_size,
+        align,
+        result
+    );
 
     result as *mut c_void
 }
@@ -128,10 +174,7 @@ pub unsafe fn gc_intern_string(string: *mut ObjString) {
     table_set(&mut GC.strings, string, NIL_VAL);
 }
 
-pub unsafe fn gc_find_interned(
-    chars: *const u8,
-    length: i32,
-    hash: u32) -> *mut ObjString {
+pub unsafe fn gc_find_interned(chars: *const u8, length: i32, hash: u32) -> *mut ObjString {
     table_find_string(&mut GC.strings, chars, length, hash)
 }
 
@@ -246,7 +289,6 @@ unsafe fn free_object(object: *mut Obj) {
         ObjType::Closure => {
             let closure = object as *mut ObjClosure;
             free_array!(
-                
                 *mut ObjUpvalue,
                 (*closure).upvalues,
                 (*closure).upvalue_count

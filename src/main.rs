@@ -1,6 +1,6 @@
-use std::{env, fs, process};
 use memory::GC;
-use vm::{VM, InterpretResult};
+use std::{env, fs, process};
+use vm::{InterpretResult, VM};
 
 pub const UINT8_COUNT: usize = u8::MAX as usize + 1;
 

@@ -226,7 +226,9 @@ impl Scanner {
         ty: TokenType,
     ) -> TokenType {
         if (self.current - self.start) == (start + length) as usize
-            && rest == &self.source[self.start + start as usize..(self.start as i32 + start + length) as usize]
+            && rest
+                == &self.source
+                    [self.start + start as usize..(self.start as i32 + start + length) as usize]
         {
             return ty;
         }
@@ -239,23 +241,27 @@ impl Scanner {
             'a' => self.check_keyword(1, 2, "nd", TokenType::And),
             'c' => self.check_keyword(1, 4, "lass", TokenType::Class),
             'e' => self.check_keyword(1, 3, "lse", TokenType::Else),
-            'f' if (self.current - self.start) > current_1st_char.len_utf8() => match self.source[self.start..].chars().nth(1).unwrap() {
-                'a' => self.check_keyword(2, 3, "lse", TokenType::False),
-                'o' => self.check_keyword(2, 1, "r", TokenType::For),
-                'u' => self.check_keyword(2, 1, "n", TokenType::Fun),
-                _ => TokenType::Identifier,
-            },
+            'f' if (self.current - self.start) > current_1st_char.len_utf8() => {
+                match self.source[self.start..].chars().nth(1).unwrap() {
+                    'a' => self.check_keyword(2, 3, "lse", TokenType::False),
+                    'o' => self.check_keyword(2, 1, "r", TokenType::For),
+                    'u' => self.check_keyword(2, 1, "n", TokenType::Fun),
+                    _ => TokenType::Identifier,
+                }
+            }
             'i' => self.check_keyword(1, 1, "f", TokenType::If),
             'n' => self.check_keyword(1, 2, "il", TokenType::Nil),
             'o' => self.check_keyword(1, 1, "r", TokenType::Or),
             'p' => self.check_keyword(1, 4, "rint", TokenType::Print),
             'r' => self.check_keyword(1, 5, "eturn", TokenType::Return),
             's' => self.check_keyword(1, 4, "uper", TokenType::Super),
-            't' if (self.current - self.start) > current_1st_char.len_utf8() => match self.source[self.start..].chars().nth(1).unwrap() as char {
-                'h' => self.check_keyword(2, 2, "is", TokenType::This),
-                'r' => self.check_keyword(2, 2, "ue", TokenType::True),
-                _ => TokenType::Identifier,
-            },
+            't' if (self.current - self.start) > current_1st_char.len_utf8() => {
+                match self.source[self.start..].chars().nth(1).unwrap() as char {
+                    'h' => self.check_keyword(2, 2, "is", TokenType::This),
+                    'r' => self.check_keyword(2, 2, "ue", TokenType::True),
+                    _ => TokenType::Identifier,
+                }
+            }
             'v' => self.check_keyword(1, 2, "ar", TokenType::Var),
             'w' => self.check_keyword(1, 4, "hile", TokenType::While),
             _ => TokenType::Identifier,
