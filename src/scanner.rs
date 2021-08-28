@@ -160,8 +160,8 @@ impl Scanner {
         result
     }
 
-    fn peek(&self) -> char {
-        self.source[self.current..].chars().next().unwrap()
+    fn peek(&self) -> Option<char> {
+        self.source[self.current..].chars().next()
     }
 
     fn peek_next(&self) -> Option<char> {
@@ -172,7 +172,7 @@ impl Scanner {
         if self.is_at_end() {
             return false;
         }
-        if self.peek() as char != expected {
+        if self.peek() != Some(expected) {
             return false;
         }
         self.current += 1;
@@ -200,7 +200,7 @@ impl Scanner {
 
     fn skip_whitespace(&mut self) {
         while !self.is_at_end() {
-            let c = self.peek() as char;
+            let c = self.peek().unwrap_or('A');
             match c {
                 ' ' | '\r' | '\t' => {
                     self.advance();
@@ -211,7 +211,7 @@ impl Scanner {
                 }
                 '/' => {
                     if self.peek_next() == Some('/') {
-                        while self.peek() as char != '\n' && !self.is_at_end() {
+                        while self.peek() != Some('\n') && !self.is_at_end() {
                             self.advance();
                         }
                     } else {
@@ -268,21 +268,21 @@ impl Scanner {
     }
 
     fn identifier(&mut self) -> Token {
-        while is_alpha(self.peek()) || is_digit(self.peek()) {
+        while is_alpha(self.peek().unwrap_or('@')) || is_digit(self.peek().unwrap_or('@')) {
             self.advance();
         }
         self.make_token(self.identifier_type())
     }
 
     fn number(&mut self) -> Token {
-        while is_digit(self.peek()) {
+        while is_digit(self.peek().unwrap_or('@')) {
             self.advance();
         }
 
-        if self.peek() as char == '.' && is_digit(self.peek_next().unwrap_or('A')) {
+        if self.peek() == Some('.') && is_digit(self.peek_next().unwrap_or('@')) {
             self.advance();
 
-            while is_digit(self.peek()) {
+            while is_digit(self.peek().unwrap_or('@')) {
                 self.advance();
             }
 
@@ -290,7 +290,7 @@ impl Scanner {
                 if !self.mtch('+') && !self.mtch('-') {
                     return self.error_token("Expect sign after 'e'.");
                 }
-                while is_digit(self.peek()) {
+                while is_digit(self.peek().unwrap_or('@')) {
                     self.advance();
                 }
             }
@@ -300,8 +300,8 @@ impl Scanner {
     }
 
     fn string(&mut self) -> Token {
-        while self.peek() as char != '"' && !self.is_at_end() {
-            if self.peek() as char == '\n' {
+        while self.peek() != Some('"') && !self.is_at_end() {
+            if self.peek() == Some('\n') {
                 self.line += 1;
             }
             self.advance();
