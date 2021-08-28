@@ -97,7 +97,7 @@ macro_rules! runtime_error {
 
 impl VM {
     pub unsafe fn new() -> VM {
-        let mut vm: VM = VM {
+        let vm: VM = VM {
             frames: [ZERO_CALL_FRAME; FRAMES_MAX],
             frame_count: 0,
             stack: [NIL_VAL; STACK_MAX],
@@ -112,7 +112,11 @@ impl VM {
             gray_stack: vec![],
             parser: None,
         };
-        
+        vm
+    }
+
+    pub unsafe fn init(&mut self) {
+        let vm = self;
         vm.reset_stack();
     
         vm.gray_stack = vec![];
@@ -124,8 +128,6 @@ impl VM {
     
         vm.define_native("clock", clock_native);
         vm.define_native("sqrt", sqrt_native);
-
-        vm
     }
 
     unsafe fn reset_stack(&mut self) {

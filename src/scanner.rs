@@ -64,7 +64,7 @@ pub enum TokenType {
 }
 
 pub struct Scanner {
-    source: Vec<u8>, // TODO: not owned
+    source: String,
     start: usize,
     current: usize,
     line: i32,
@@ -72,8 +72,7 @@ pub struct Scanner {
 
 impl Scanner {
     pub fn new(source: &str) -> Scanner {
-        let mut source = source.as_bytes().to_owned();
-        source.push(0); // TODO: do i want sentinel?
+        let source = source.to_string();
         Scanner {
             source,
             start: 0,
@@ -83,41 +82,37 @@ impl Scanner {
     }
 
     pub fn scan_token(&mut self) -> Token {
+        // println!("++++ scan_token: {:?}", unsafe { str::from_utf8_unchecked(&self.source[self.start..]) });
         self.skip_whitespace();
-        self.start += self.current;
-        self.current = 0;
+        self.start = self.current;
+        // self.current = 0;
 
         if self.is_at_end() {
+            // println!("---- scan_token: Eof");
             return self.make_token(TokenType::Eof);
         }
 
         let c = self.advance();
 
-        if is_alpha(c) {
-            return self.identifier();
-        }
-
-        if is_digit(c) {
-            return self.number();
-        }
-
-        match c as char {
-            '(' => return self.make_token(TokenType::LeftParen),
-            ')' => return self.make_token(TokenType::RightParen),
-            '{' => return self.make_token(TokenType::LeftBrace),
-            '}' => return self.make_token(TokenType::RightBrace),
-            '[' => return self.make_token(TokenType::LeftBracket),
-            ']' => return self.make_token(TokenType::RightBracket),
-            ';' => return self.make_token(TokenType::Semicolon),
-            ',' => return self.make_token(TokenType::Comma),
-            '.' => return self.make_token(TokenType::Dot),
-            '-' => return self.make_token(TokenType::Minus),
-            '+' => return self.make_token(TokenType::Plus),
-            '/' => return self.make_token(TokenType::Slash),
-            '*' => return self.make_token(TokenType::Star),
+        let result = match c {
+            _ if is_alpha(c) => self.identifier(),
+            _ if is_digit(c) => self.number(),
+            '(' => self.make_token(TokenType::LeftParen),
+            ')' => self.make_token(TokenType::RightParen),
+            '{' => self.make_token(TokenType::LeftBrace),
+            '}' => self.make_token(TokenType::RightBrace),
+            '[' => self.make_token(TokenType::LeftBracket),
+            ']' => self.make_token(TokenType::RightBracket),
+            ';' => self.make_token(TokenType::Semicolon),
+            ',' => self.make_token(TokenType::Comma),
+            '.' => self.make_token(TokenType::Dot),
+            '-' => self.make_token(TokenType::Minus),
+            '+' => self.make_token(TokenType::Plus),
+            '/' => self.make_token(TokenType::Slash),
+            '*' => self.make_token(TokenType::Star),
             '!' => {
                 let shut_up_borrow_checker = self.mtch('=');
-                return self.make_token(if shut_up_borrow_checker {
+                self.make_token(if shut_up_borrow_checker {
                     TokenType::BangEqual
                 } else {
                     TokenType::Bang
@@ -125,7 +120,7 @@ impl Scanner {
             }
             '=' => {
                 let shut_up_borrow_checker = self.mtch('=');
-                return self.make_token(if shut_up_borrow_checker {
+                self.make_token(if shut_up_borrow_checker {
                     TokenType::EqualEqual
                 } else {
                     TokenType::Equal
@@ -133,7 +128,7 @@ impl Scanner {
             }
             '<' => {
                 let shut_up_borrow_checker = self.mtch('=');
-                return self.make_token(if shut_up_borrow_checker {
+                self.make_token(if shut_up_borrow_checker {
                     TokenType::LessEqual
                 } else {
                     TokenType::Less
@@ -141,39 +136,36 @@ impl Scanner {
             }
             '>' => {
                 let shut_up_borrow_checker = self.mtch('=');
-                return self.make_token(if shut_up_borrow_checker {
+                self.make_token(if shut_up_borrow_checker {
                     TokenType::GreaterEqual
                 } else {
                     TokenType::Greater
                 })
             }
-            '"' => return self.string(),
-            _ => {}
-        }
+            '"' => self.string(),
+            _ => self.error_token("Unexpected character."),
+        };
 
-        return self.error_token("Unexpected character.");
+        // println!("---- scan_token: {:?}", result);
+        result
     }
 
     fn is_at_end(&self) -> bool {
-        return self.source.len() - self.start == self.current;
+        return self.source.len() == self.current;
     }
 
-    fn advance(&mut self) -> u8 {
-        self.current += 1;
-        self.source[self.start + self.current - 1]
+    fn advance(&mut self) -> char {
+        let result = self.source[self.current..].chars().next().unwrap();
+        self.current += result.len_utf8();
+        result
     }
 
-    fn peek(&self) -> u8 {
-        self.source[self.start + self.current]
+    fn peek(&self) -> char {
+        self.source[self.current..].chars().next().unwrap()
     }
 
-    fn peek_next(&self) -> u8 {
-        if self.is_at_end() {
-            return 0;
-        }
-        // TODO: almost certain this is off by one. when "at end", start[current_length] is outside the slice, so that + 1...
-        // LATER: actually probably "fixed" by the sentinel i added. is that what i want?
-        self.source[self.start + self.current + 1]
+    fn peek_next(&self) -> Option<char> {
+        self.source[self.current..].chars().nth(1)
     }
 
     fn mtch(&mut self, expected: char) -> bool {
@@ -192,7 +184,7 @@ impl Scanner {
             ty,
             // TODO: slice instead of start/length
             start: self.source[self.start..].as_ptr(),
-            length: self.current as i32,
+            length: (self.current - self.start) as i32,
             line: self.line,
         }
     }
@@ -218,7 +210,7 @@ impl Scanner {
                     self.advance();
                 }
                 '/' => {
-                    if self.peek_next() as char == '/' {
+                    if self.peek_next() == Some('/') {
                         while self.peek() as char != '\n' && !self.is_at_end() {
                             self.advance();
                         }
@@ -238,8 +230,8 @@ impl Scanner {
         rest: &'static str,
         ty: TokenType,
     ) -> TokenType {
-        if self.current == (start + length) as usize
-            && rest.as_bytes() == &self.source[self.start + start as usize..(start + length) as usize]
+        if (self.current - self.start) == (start + length) as usize
+            && rest == &self.source[self.start + start as usize..(self.start as i32 + start + length) as usize]
         {
             return ty;
         }
@@ -247,11 +239,12 @@ impl Scanner {
     }
 
     fn identifier_type(&self) -> TokenType {
-        match self.source[self.start] as char {
+        let current_1st_char = self.source[self.start..].chars().next().unwrap();
+        match current_1st_char {
             'a' => self.check_keyword(1, 2, "nd", TokenType::And),
             'c' => self.check_keyword(1, 4, "lass", TokenType::Class),
             'e' => self.check_keyword(1, 3, "lse", TokenType::Else),
-            'f' if self.current > 1 => match self.source[self.start + 1] as char {
+            'f' if (self.current - self.start) > current_1st_char.len_utf8() => match self.source[self.start..].chars().nth(1).unwrap() {
                 'a' => self.check_keyword(2, 3, "lse", TokenType::False),
                 'o' => self.check_keyword(2, 1, "r", TokenType::For),
                 'u' => self.check_keyword(2, 1, "n", TokenType::Fun),
@@ -263,7 +256,7 @@ impl Scanner {
             'p' => self.check_keyword(1, 4, "rint", TokenType::Print),
             'r' => self.check_keyword(1, 5, "eturn", TokenType::Return),
             's' => self.check_keyword(1, 4, "uper", TokenType::Super),
-            't' if self.current > 1 => match self.source[self.start + 1] as char {
+            't' if (self.current - self.start) > current_1st_char.len_utf8() => match self.source[self.start..].chars().nth(1).unwrap() as char {
                 'h' => self.check_keyword(2, 2, "is", TokenType::This),
                 'r' => self.check_keyword(2, 2, "ue", TokenType::True),
                 _ => TokenType::Identifier,
@@ -286,7 +279,7 @@ impl Scanner {
             self.advance();
         }
 
-        if self.peek() as char == '.' && is_digit(self.peek_next()) {
+        if self.peek() as char == '.' && is_digit(self.peek_next().unwrap_or('A')) {
             self.advance();
 
             while is_digit(self.peek()) {
@@ -321,11 +314,10 @@ impl Scanner {
     }
 }
 
-fn is_alpha(c: u8) -> bool {
-    let c = c as char;
+fn is_alpha(c: char) -> bool {
     (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'
 }
 
-fn is_digit(c: u8) -> bool {
-    c as char >= '0' && c as char <= '9'
+fn is_digit(c: char) -> bool {
+    c >= '0' && c <= '9'
 }

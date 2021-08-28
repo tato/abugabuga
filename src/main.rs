@@ -52,6 +52,7 @@ fn main() {
     unsafe {
         let mut vm = VM::new();
         GC.vm = &mut vm;
+        vm.init();
 
         let args = env::args().collect::<Vec<_>>();
         if args.len() == 1 {

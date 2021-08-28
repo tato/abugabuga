@@ -77,7 +77,6 @@ pub static mut GC: GarbageCollector = GarbageCollector{
 };
 
 pub unsafe fn reallocate(pointer: *mut c_void, old_size: usize, new_size: usize) -> *mut c_void {
-    println!("++++ Hola");
     let vm = &mut *GC.vm;
 
     if new_size > old_size {
@@ -106,7 +105,6 @@ pub unsafe fn reallocate(pointer: *mut c_void, old_size: usize, new_size: usize)
         ptr::copy(pointer as *mut u8, result, old_size);
     }
 
-    println!("---- Adios");
     result as *mut c_void
 }
 
