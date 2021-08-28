@@ -1,6 +1,6 @@
 use std::ptr;
 
-use crate::object::{print_object};
+use crate::object::print_object;
 
 #[cfg(not(feature = "nan_boxing"))]
 mod value_inner {
@@ -96,7 +96,6 @@ mod value_inner {
     const FALSE_TAG: u64 = 0b10;
     const TRUE_TAG: u64 = 0b11;
 
-
     #[derive(Clone, Copy)]
     pub struct Value(pub u64);
 
@@ -113,7 +112,7 @@ mod value_inner {
     }
 
     pub fn is_obj(value: Value) -> bool {
-        ( value.0 & (QNAN | SIGN_BIT)) == (QNAN | SIGN_BIT)
+        (value.0 & (QNAN | SIGN_BIT)) == (QNAN | SIGN_BIT)
     }
 
     pub fn as_number(value: Value) -> f64 {
@@ -138,11 +137,15 @@ mod value_inner {
     const FALSE_VAL: Value = Value(QNAN | FALSE_TAG);
 
     pub fn bool_val(b: bool) -> Value {
-        if b { TRUE_VAL } else { FALSE_VAL }
+        if b {
+            TRUE_VAL
+        } else {
+            FALSE_VAL
+        }
     }
 
     pub fn obj_val(obj: *mut Obj) -> Value {
-        Value(SIGN_BIT | QNAN | unsafe{ mem::transmute::<*mut Obj, u64>(obj) })
+        Value(SIGN_BIT | QNAN | unsafe { mem::transmute::<*mut Obj, u64>(obj) })
     }
 
     fn num_to_value(num: f64) -> Value {

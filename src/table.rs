@@ -3,11 +3,7 @@ use std::{
     slice,
 };
 
-use crate::{
-    memory::{mark_object, mark_value},
-    object::{Obj, ObjString},
-    value::{bool_val, is_nil, NIL_VAL, Value},
-};
+use crate::{memory::{mark_object, mark_value}, object::{Obj, ObjString}, value::{bool_val, is_nil, Value, NIL_VAL}, vm::VM};
 
 const TABLE_MAX_LOAD: f32 = 0.75;
 
@@ -198,10 +194,10 @@ pub unsafe fn table_remove_white(table: *mut Table) {
     }
 }
 
-pub unsafe fn mark_table(table: *mut Table) {
+pub unsafe fn mark_table(table: *mut Table, vm: &mut VM) {
     for i in 0..(*table).capacity {
         let entry = (*table).entries.offset(i as isize);
-        mark_object((*entry).key as *mut Obj);
-        mark_value((*entry).value);
+        mark_object(vm, (*entry).key as *mut Obj);
+        mark_value(vm, (*entry).value);
     }
 }

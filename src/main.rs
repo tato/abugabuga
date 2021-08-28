@@ -1,5 +1,6 @@
 use std::{env, fs, process};
-use vm::{free_vm, init_vm, interpret, InterpretResult};
+use memory::GC;
+use vm::{VM, InterpretResult};
 
 pub const UINT8_COUNT: usize = u8::MAX as usize + 1;
 
@@ -18,7 +19,7 @@ mod vm;
 #[cfg(test)]
 mod test;
 
-unsafe fn repl() {
+unsafe fn repl(vm: &mut VM) {
     let stdin = std::io::stdin();
     let mut stdout = std::io::stdout();
     use std::io::{BufRead, Write};
@@ -31,13 +32,13 @@ unsafe fn repl() {
             println!();
             break;
         }
-        interpret(&line);
+        vm.interpret(&line);
     }
 }
 
-unsafe fn run_file(path: &str) {
+unsafe fn run_file(vm: &mut VM, path: &str) {
     let source = fs::read_to_string(path).expect(&format!("Could not read file \"{}\"", path));
-    let result = interpret(&source);
+    let result = vm.interpret(&source);
 
     if result == InterpretResult::CompileError {
         process::exit(65);
@@ -49,18 +50,17 @@ unsafe fn run_file(path: &str) {
 
 fn main() {
     unsafe {
-        init_vm();
+        let mut vm = VM::new();
+        GC.vm = &mut vm;
 
         let args = env::args().collect::<Vec<_>>();
         if args.len() == 1 {
-            repl();
+            repl(&mut vm);
         } else if args.len() == 2 {
-            run_file(&args[1]);
+            run_file(&mut vm, &args[1]);
         } else {
             eprintln!("Usage: abugabuga [path]");
             process::exit(64);
         }
-
-        free_vm();
     }
 }

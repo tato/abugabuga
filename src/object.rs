@@ -1,6 +1,6 @@
 use std::{ptr, slice, str};
 
-use crate::{chunk::{init_chunk, Chunk}, memory::reallocate, table::{init_table, table_find_string, table_set, Table}, value::{NIL_VAL, Value, as_obj, is_obj, obj_val, print_value}, vm::{pop, push, vm}};
+use crate::{chunk::{init_chunk, Chunk}, memory::{gc_find_interned, gc_intern_string, gc_track_constant_for_chunk_or_strings_table, gc_track_object, gc_untrack_constant_for_chunk_or_strings_table, reallocate}, table::{init_table, Table}, value::{as_obj, is_obj, obj_val, print_value, Value, NIL_VAL}};
 
 macro_rules! allocate_obj {
     ($t:ty, $obj_type:expr) => {
@@ -12,14 +12,13 @@ unsafe fn allocate_object(size: usize, ty: ObjType) -> *mut Obj {
     let object = reallocate(ptr::null_mut(), 0, size) as *mut Obj;
     (*object).ty = ty;
     (*object).is_marked = false;
-    (*object).next = vm.objects;
+    (*object).next = gc_track_object(object);
 
     #[cfg(feature = "debug_log_gc")]
     {
         println!("{:?} allocate {} for {:?}", object, size, ty);
     }
 
-    vm.objects = object;
     object
 }
 
@@ -28,9 +27,9 @@ unsafe fn allocate_string(chars: *mut u8, length: i32, hash: u32) -> *mut ObjStr
     (*string).length = length;
     (*string).chars = chars;
     (*string).hash = hash;
-    push(obj_val(string as *mut Obj));
-    table_set(&mut vm.strings, string, NIL_VAL);
-    pop();
+    gc_track_constant_for_chunk_or_strings_table(obj_val(string as *mut Obj));
+    gc_intern_string(string);
+    gc_untrack_constant_for_chunk_or_strings_table();
     string
 }
 
@@ -266,7 +265,7 @@ pub unsafe fn new_bound_method(receiver: Value, method: *mut ObjClosure) -> *mut
 
 pub unsafe fn take_string(chars: *mut u8, length: i32) -> *mut ObjString {
     let hash = hash_string(chars, length);
-    let interned = table_find_string(&mut vm.strings, chars, length, hash);
+    let interned = gc_find_interned(chars, length, hash);
     if interned != ptr::null_mut() {
         free_array!(u8, chars, length + 1);
         return interned;
@@ -276,7 +275,7 @@ pub unsafe fn take_string(chars: *mut u8, length: i32) -> *mut ObjString {
 
 pub unsafe fn copy_string(chars: *const u8, length: i32) -> *mut ObjString {
     let hash = hash_string(chars, length);
-    let interned = table_find_string(&mut vm.strings, chars, length, hash);
+    let interned = gc_find_interned(chars, length, hash);
     if interned != ptr::null_mut() {
         return interned;
     }
