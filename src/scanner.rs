@@ -1,5 +1,4 @@
 use std::str;
-// TODO: tests\fixtures\functions5.lox
 
 #[derive(Debug, Clone, Copy)]
 pub struct Token {
@@ -82,13 +81,10 @@ impl Scanner {
     }
 
     pub fn scan_token(&mut self) -> Token {
-        // println!("++++ scan_token: {:?}", unsafe { str::from_utf8_unchecked(&self.source[self.start..]) });
         self.skip_whitespace();
         self.start = self.current;
-        // self.current = 0;
 
         if self.is_at_end() {
-            // println!("---- scan_token: Eof");
             return self.make_token(TokenType::Eof);
         }
 
@@ -146,7 +142,6 @@ impl Scanner {
             _ => self.error_token("Unexpected character."),
         };
 
-        // println!("---- scan_token: {:?}", result);
         result
     }
 
