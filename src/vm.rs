@@ -34,7 +34,6 @@ pub struct VM {
     pub globals: Table,
     pub init_string: *mut ObjString,
     pub open_upvalues: *mut ObjUpvalue,
-    pub gray_stack: Vec<*mut Obj>,
     pub parser: Option<Parser>,
 }
 
@@ -109,7 +108,6 @@ impl VM {
             },
             init_string: ptr::null_mut(),
             open_upvalues: ptr::null_mut(),
-            gray_stack: vec![],
             parser: None,
         };
         vm
@@ -118,8 +116,6 @@ impl VM {
     pub unsafe fn init(&mut self) {
         let vm = self;
         vm.reset_stack();
-    
-        vm.gray_stack = vec![];
     
         init_table(&mut vm.globals);
     

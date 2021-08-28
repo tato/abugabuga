@@ -1,6 +1,6 @@
 use std::{mem, ptr, slice, str, u8};
 
-use crate::{UINT8_COUNT, chunk::{add_constant, write_chunk, Chunk, OpCode}, memory::mark_object, object::{copy_string, new_function, Obj, ObjFunction}, scanner::{Scanner, Token, TokenType}, value::{number_val, obj_val, Value}, vm::VM};
+use crate::{UINT8_COUNT, chunk::{add_constant, write_chunk, Chunk, OpCode}, memory::mark_object, object::{copy_string, new_function, Obj, ObjFunction}, scanner::{Scanner, Token, TokenType}, value::{number_val, obj_val, Value}};
 
 #[cfg(feature = "debug_print_code")]
 use crate::debug::disassemble_chunk;
@@ -291,10 +291,10 @@ impl Parser {
         }
     }
 
-    pub unsafe fn mark_compiler_roots(&mut self, vm: &mut VM) {
+    pub unsafe fn mark_compiler_roots(&mut self) {
         let mut compiler = self.current_compiler;
         while compiler != ptr::null_mut() {
-            mark_object(vm, (*compiler).function as *mut Obj);
+            mark_object((*compiler).function as *mut Obj);
             compiler = (*compiler).enclosing;
         }
     }

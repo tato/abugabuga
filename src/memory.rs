@@ -1,4 +1,4 @@
-use std::{ffi::c_void, ptr};
+use std::{ffi::c_void, ptr, vec};
 
 use crate::{chunk::free_chunk, compiler::Parser, object::{Obj, ObjBoundMethod, ObjClass, ObjClosure, ObjFunction, ObjInstance, ObjList, ObjNative, ObjString, ObjType, ObjUpvalue}, table::{Table, free_table, mark_table, table_find_string, table_remove_white, table_set}, value::{NIL_VAL, Value, ValueArray, as_obj, is_obj}, vm::VM};
 
@@ -63,6 +63,7 @@ pub struct GarbageCollector {
     next_gc: usize,
     strings: Table,
     objects: *mut Obj,
+    gray_stack: Vec<*mut Obj>,
 }
 pub static mut GC: GarbageCollector = GarbageCollector{ 
     vm: ptr::null_mut(),
@@ -74,11 +75,10 @@ pub static mut GC: GarbageCollector = GarbageCollector{
         entries: ptr::null_mut(),
     },
     objects: ptr::null_mut(),
+    gray_stack: vec![],
 };
 
 pub unsafe fn reallocate(pointer: *mut c_void, old_size: usize, new_size: usize) -> *mut c_void {
-    let vm = &mut *GC.vm;
-
     if new_size > old_size {
         GC.bytes_allocated += new_size - old_size;
     } else {
@@ -88,11 +88,11 @@ pub unsafe fn reallocate(pointer: *mut c_void, old_size: usize, new_size: usize)
     if new_size > old_size {
         #[cfg(feature = "debug_stress_gc")]
         {
-            collect_garbage(vm);
+            collect_garbage();
         }
 
         if GC.bytes_allocated > GC.next_gc {
-            collect_garbage(vm);
+            collect_garbage();
         }
     }
     if new_size == 0 {
@@ -135,7 +135,7 @@ pub unsafe fn gc_find_interned(
     table_find_string(&mut GC.strings, chars, length, hash)
 }
 
-pub unsafe fn mark_object(vm: &mut VM, object: *mut Obj) {
+pub unsafe fn mark_object(object: *mut Obj) {
     if object == ptr::null_mut() {
         return;
     }
@@ -152,22 +152,22 @@ pub unsafe fn mark_object(vm: &mut VM, object: *mut Obj) {
 
     (*object).is_marked = true;
 
-    vm.gray_stack.push(object);
+    GC.gray_stack.push(object);
 }
 
-pub unsafe fn mark_value(vm: &mut VM, value: Value) {
+pub unsafe fn mark_value(value: Value) {
     if is_obj(value) {
-        mark_object(vm, as_obj(value));
+        mark_object(as_obj(value));
     }
 }
 
-unsafe fn mark_array(vm: &mut VM, array: *mut ValueArray) {
+unsafe fn mark_array(array: *mut ValueArray) {
     for i in 0..(*array).count {
-        mark_value(vm, *(*array).values.offset(i as isize));
+        mark_value(*(*array).values.offset(i as isize));
     }
 }
 
-unsafe fn blacken_object(vm: &mut VM, object: *mut Obj) {
+unsafe fn blacken_object(object: *mut Obj) {
     #[cfg(feature = "debug_log_gc")]
     {
         print!("{:?} blacken ", object);
@@ -179,36 +179,36 @@ unsafe fn blacken_object(vm: &mut VM, object: *mut Obj) {
         ObjType::List => {
             let list = object as *mut ObjList;
             for val in &(*list).items {
-                mark_value(vm, *val);
+                mark_value(*val);
             }
         }
         ObjType::Closure => {
             let closure = object as *mut ObjClosure;
-            mark_object(vm, (*closure).function as *mut Obj);
+            mark_object((*closure).function as *mut Obj);
             for i in 0..(*closure).upvalue_count {
-                mark_object(vm, (*closure).upvalues.offset(i as isize) as *mut Obj);
+                mark_object((*closure).upvalues.offset(i as isize) as *mut Obj);
             }
         }
         ObjType::Function => {
             let function = object as *mut ObjFunction;
-            mark_object(vm, (*function).name as *mut Obj);
-            mark_array(vm, &mut (*function).chunk.constants);
+            mark_object((*function).name as *mut Obj);
+            mark_array(&mut (*function).chunk.constants);
         }
-        ObjType::Upvalue => mark_value(vm, (*(object as *mut ObjUpvalue)).closed),
+        ObjType::Upvalue => mark_value((*(object as *mut ObjUpvalue)).closed),
         ObjType::Class => {
             let class = object as *mut ObjClass;
-            mark_object(vm, (*class).name as *mut Obj);
-            mark_table(&mut (*class).methods, vm);
+            mark_object((*class).name as *mut Obj);
+            mark_table(&mut (*class).methods);
         }
         ObjType::Instance => {
             let instance = object as *mut ObjInstance;
-            mark_object(vm, (*instance).class as *mut Obj);
-            mark_table(&mut (*instance).fields, vm);
+            mark_object((*instance).class as *mut Obj);
+            mark_table(&mut (*instance).fields);
         }
         ObjType::BoundMethod => {
             let bound = object as *mut ObjBoundMethod;
-            mark_value(vm, (*bound).receiver);
-            mark_object(vm, (*bound).method as *mut Obj);
+            mark_value((*bound).receiver);
+            mark_object((*bound).method as *mut Obj);
         }
         ObjType::Native | ObjType::String => {}
     }
@@ -269,32 +269,33 @@ unsafe fn free_object(object: *mut Obj) {
     }
 }
 
-unsafe fn mark_roots(vm: &mut VM) {
+unsafe fn mark_roots() {
+    let vm = &mut *GC.vm;
     let mut slot = vm.stack.as_mut_ptr();
     while slot < vm.stack_top {
-        mark_value(vm, *slot);
+        mark_value(*slot);
         slot = slot.add(1);
     }
 
     for i in 0..vm.frame_count {
-        mark_object(vm, vm.frames[i as usize].closure as *mut Obj);
+        mark_object(vm.frames[i as usize].closure as *mut Obj);
     }
 
     let mut upvalue = vm.open_upvalues;
     while upvalue != ptr::null_mut() {
-        mark_object(vm, upvalue as *mut Obj);
+        mark_object(upvalue as *mut Obj);
         upvalue = (*upvalue).next;
     }
 
-    mark_table(&mut vm.globals, vm);
+    mark_table(&mut vm.globals);
     let parser: *mut Parser = vm.parser.as_mut().unwrap();
-    (*parser).mark_compiler_roots(vm);
-    mark_object(vm, vm.init_string as *mut Obj);
+    (*parser).mark_compiler_roots();
+    mark_object(vm.init_string as *mut Obj);
 }
 
-unsafe fn trace_references(vm: &mut VM) {
-    while let Some(object) = vm.gray_stack.pop() {
-        blacken_object(vm,object);
+unsafe fn trace_references() {
+    while let Some(object) = GC.gray_stack.pop() {
+        blacken_object(object);
     }
 }
 
@@ -320,7 +321,7 @@ unsafe fn sweep() {
     }
 }
 
-unsafe fn collect_garbage(vm: &mut VM) {
+unsafe fn collect_garbage() {
     #[cfg(feature = "debug_log_gc")]
     {
         println!("-- gc begin");
@@ -328,8 +329,8 @@ unsafe fn collect_garbage(vm: &mut VM) {
     #[allow(unused_variables)]
     let before = GC.bytes_allocated;
 
-    mark_roots(vm);
-    trace_references(vm);
+    mark_roots();
+    trace_references();
     table_remove_white(&mut GC.strings);
     sweep();
 
@@ -340,10 +341,10 @@ unsafe fn collect_garbage(vm: &mut VM) {
         println!("-- gc end");
         println!(
             "   collected {} bytes (from {} to {}) next at {}",
-            before - vm.bytes_allocated,
+            before - GC.bytes_allocated,
             before,
-            vm.bytes_allocated,
-            vm.next_gc
+            GC.bytes_allocated,
+            GC.next_gc
         );
     }
 }
