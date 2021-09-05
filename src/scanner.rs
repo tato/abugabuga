@@ -180,7 +180,7 @@ impl<'source> Scanner<'source> {
         }
     }
 
-    pub fn error_token(&self, message: &'static str) -> Token<'static> {
+    fn error_token(&self, message: &'static str) -> Token<'static> {
         Token {
             ty: TokenType::Error,
             lexeme: message,

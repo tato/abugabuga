@@ -765,10 +765,15 @@ impl<'source> Parser<'source> {
 pub unsafe fn compile(source: &str) -> *mut ObjFunction {
     let mut scanner = Scanner::new(source);
 
-    let uninit_error_msg = "INTERNAL COMPILER ERROR: Uninitialized token.";
+    let nul_token = Token {
+        lexeme: "",
+        line: 0,
+        ty: TokenType::Error,
+    };
+
     let mut parser = Parser {
-        current: scanner.error_token(uninit_error_msg),
-        previous: scanner.error_token(uninit_error_msg),
+        current: nul_token,
+        previous: nul_token,
         had_error: false,
         panic_mode: false,
         current_compiler: ptr::null_mut(),
