@@ -78,7 +78,7 @@ impl<'source> Scanner<'source> {
         }
     }
 
-    pub fn scan_token(&mut self) -> Token {
+    pub fn scan_token(&mut self) -> Token<'source> {
         self.skip_whitespace();
         self.start = self.current;
 
@@ -172,7 +172,7 @@ impl<'source> Scanner<'source> {
         true
     }
 
-    fn make_token(&self, ty: TokenType) -> Token {
+    fn make_token(&self, ty: TokenType) -> Token<'source> {
         Token {
             ty,
             lexeme: &self.source[self.start..self.current],
@@ -263,14 +263,14 @@ impl<'source> Scanner<'source> {
         }
     }
 
-    fn identifier(&mut self) -> Token {
+    fn identifier(&mut self) -> Token<'source> {
         while is_alpha(self.peek().unwrap_or('@')) || is_digit(self.peek().unwrap_or('@')) {
             self.advance();
         }
         self.make_token(self.identifier_type())
     }
 
-    fn number(&mut self) -> Token {
+    fn number(&mut self) -> Token<'source> {
         while is_digit(self.peek().unwrap_or('@')) {
             self.advance();
         }
@@ -295,7 +295,7 @@ impl<'source> Scanner<'source> {
         self.make_token(TokenType::Number)
     }
 
-    fn string(&mut self) -> Token {
+    fn string(&mut self) -> Token<'source> {
         while self.peek() != Some('"') && !self.is_at_end() {
             if self.peek() == Some('\n') {
                 self.line += 1;
