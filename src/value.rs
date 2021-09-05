@@ -44,16 +44,16 @@ mod value_inner {
         value.ty == ValueType::Obj
     }
 
-    pub unsafe fn as_bool(value: Value) -> bool {
-        value.val.boolean
+    pub fn as_bool(value: Value) -> bool {
+        unsafe { value.val.boolean }
     }
 
-    pub unsafe fn as_number(value: Value) -> f64 {
-        value.val.number
+    pub fn as_number(value: Value) -> f64 {
+        unsafe { value.val.number }
     }
 
-    pub unsafe fn as_obj(value: Value) -> *mut Obj {
-        value.val.obj
+    pub fn as_obj(value: Value) -> *mut Obj {
+        unsafe { value.val.obj }
     }
 
     pub fn bool_val(value: bool) -> Value {
@@ -165,33 +165,39 @@ pub struct ValueArray {
     pub values: *mut Value,
 }
 
-pub unsafe fn init_value_array(array: *mut ValueArray) {
-    let array = &mut *array;
-    array.count = 0;
-    array.capacity = 0;
-    array.values = ptr::null_mut();
-}
-
-pub unsafe fn write_value_array(array: *mut ValueArray, value: Value) {
-    let array = &mut *array;
-
-    if array.capacity < array.count + 1 {
-        let old_capacity = array.capacity;
-        array.capacity = grow_capacity!(old_capacity);
-        array.values = grow_array!(Value, array.values, old_capacity, array.capacity);
+impl ValueArray {
+    pub const fn new() -> ValueArray {
+        ValueArray {
+            capacity: 0,
+            count: 0,
+            values: ptr::null_mut(),
+        }
     }
 
-    *array.values.offset(array.count as isize) = value;
-    array.count += 1;
+    pub fn write(&mut self, value: Value) {
+        if self.capacity < self.count + 1 {
+            let old_capacity = self.capacity;
+            self.capacity = grow_capacity!(old_capacity);
+            self.values = grow_array!(Value, self.values, old_capacity, self.capacity);
+        }
+
+        unsafe {
+            *self.values.offset(self.count as isize) = value;
+        }
+        self.count += 1;
+    }
+
+    pub fn free(&mut self) {
+        free_array!(Value, self.values, self.capacity);
+        *self = ValueArray::new();
+    }
 }
 
-pub unsafe fn free_value_array(array: *mut ValueArray) {
-    {
-        let array = &mut *array;
-        free_array!(Value, array.values, array.capacity);
-    }
-    init_value_array(array);
-}
+// impl Drop for ValueArray {
+//     fn drop(&mut self) {
+//         self.free()
+//     }
+// }
 
 #[cfg(not(feature = "nan_boxing"))]
 pub unsafe fn print_value(value: Value) {

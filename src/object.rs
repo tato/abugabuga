@@ -12,7 +12,11 @@ use crate::{
 
 macro_rules! allocate_obj {
     ($t:ty, $obj_type:expr) => {
-        allocate_object(std::mem::size_of::<$t>(), std::mem::align_of::<$t>(), $obj_type) as *mut $t
+        allocate_object(
+            std::mem::size_of::<$t>(),
+            std::mem::align_of::<$t>(),
+            $obj_type,
+        ) as *mut $t
     };
 }
 

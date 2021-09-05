@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2018"
 
 [features]
-default = ["nan_boxing"]
+default = ["nan_boxing", "debug_stress_gc", "debug_trace_execution"]
 debug_trace_execution = []
 debug_print_code = []
 debug_stress_gc = []

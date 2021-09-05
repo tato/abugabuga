@@ -5,7 +5,7 @@ use crate::{
         gc_track_constant_for_chunk_or_strings_table,
         gc_untrack_constant_for_chunk_or_strings_table,
     },
-    value::{free_value_array, init_value_array, write_value_array, Value, ValueArray},
+    value::{Value, ValueArray},
 };
 
 pub enum OpCode {
@@ -64,7 +64,7 @@ pub unsafe fn init_chunk(chunk: *mut Chunk) {
     chunk.capacity = 0;
     chunk.code = ptr::null_mut();
     chunk.lines = ptr::null_mut();
-    init_value_array(&mut chunk.constants);
+    chunk.constants = ValueArray::new();
 }
 
 pub unsafe fn free_chunk(chunk: *mut Chunk) {
@@ -72,7 +72,7 @@ pub unsafe fn free_chunk(chunk: *mut Chunk) {
         let chunk = &mut *chunk;
         free_array!(u8, chunk.code, chunk.capacity);
         free_array!(i32, chunk.lines, chunk.capacity);
-        free_value_array(&mut chunk.constants);
+        chunk.constants.free(); // TODO: drop?
     }
     init_chunk(chunk);
 }
@@ -95,7 +95,7 @@ pub unsafe fn write_chunk(chunk: *mut Chunk, byte: u8, line: i32) {
 pub unsafe fn add_constant(chunk: *mut Chunk, value: Value) -> i32 {
     gc_track_constant_for_chunk_or_strings_table(value);
     let chunk = &mut *chunk;
-    write_value_array(&mut chunk.constants, value);
+    chunk.constants.write(value);
     gc_untrack_constant_for_chunk_or_strings_table();
     chunk.constants.count - 1
 }

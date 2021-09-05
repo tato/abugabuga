@@ -125,7 +125,7 @@ unsafe fn constant_instruction(name: &str, chunk: *mut Chunk, offset: i32) -> i3
 unsafe fn invoke_instruction(name: &str, chunk: *mut Chunk, offset: i32) -> i32 {
     let constant = *(*chunk).code.offset(offset as isize + 1);
     let arg_count = *(*chunk).code.offset(offset as isize + 2);
-    print!("{:-16} ({} args) {:4} '", name, constant);
+    print!("{:-16} ({} args) {:4} '", name, arg_count, constant);
     print_value(*(*chunk).constants.values.add(constant as usize));
     println!("'");
     offset + 3

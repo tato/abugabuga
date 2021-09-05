@@ -371,8 +371,8 @@ impl VM {
             #[cfg(feature = "debug_trace_execution")]
             {
                 print!("          ");
-                let mut slot = vm.stack.as_ptr();
-                while slot < vm.stack_top {
+                let mut slot = self.stack.as_ptr();
+                while slot < self.stack_top {
                     print!("[ ");
                     print_value(*slot);
                     print!(" ]");
@@ -380,10 +380,10 @@ impl VM {
                 }
                 println!("");
                 disassemble_instruction(
-                    &mut (*(*frame.closure).function).chunk,
-                    frame
+                    &mut (*(*(*frame).closure).function).chunk,
+                    (*frame)
                         .ip
-                        .sub((*(*frame.closure).function).chunk.code as usize)
+                        .sub((*(*(*frame).closure).function).chunk.code as usize)
                         as i32,
                 );
             }

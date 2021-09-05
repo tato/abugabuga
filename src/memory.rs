@@ -2,7 +2,6 @@ use std::{alloc, ffi::c_void, ptr, vec};
 
 use crate::{
     chunk::free_chunk,
-    compiler::Parser,
     object::{
         Obj, ObjBoundMethod, ObjClass, ObjClosure, ObjFunction, ObjInstance, ObjList, ObjNative,
         ObjString, ObjType, ObjUpvalue,
@@ -71,6 +70,7 @@ macro_rules! free_array {
 
 const GC_HEAP_GROW_FACTOR: usize = 2;
 
+// http://gchandbook.org/
 pub struct GarbageCollector {
     pub vm: *mut VM,
     bytes_allocated: usize,
@@ -98,26 +98,27 @@ pub fn reallocate(
     new_size: usize,
     align: usize,
 ) -> *mut c_void {
+    // println!(
+    //     "++++ reallocate(pointer = {:?}, old_size = {}, new_size = {}, align = {})",
+    //     pointer, old_size, new_size, align
+    // );
     let gc = unsafe { &mut GC };
 
-    if new_size > old_size {
-        gc.bytes_allocated += new_size - old_size;
-    } else {
-        gc.bytes_allocated -= old_size - new_size;
-    }
+    gc.bytes_allocated -= old_size;
+    gc.bytes_allocated += new_size;
 
     if new_size > old_size {
-        #[cfg(feature = "debug_stress_gc")]
-        {
-            collect_garbage();
-        }
+        // #[cfg(feature = "debug_stress_gc")]
+        // {
+        //     unsafe { collect_garbage(); }
+        // }
 
-        if gc.bytes_allocated > gc.next_gc {
+        if cfg!(feature = "debug_stress_gc") || gc.bytes_allocated > gc.next_gc {
             unsafe { collect_garbage() };
         }
     }
 
-    if pointer == ptr::null_mut() {
+    let result = if pointer == ptr::null_mut() {
         let layout = alloc::Layout::from_size_align(new_size, align).unwrap();
         let result = unsafe { alloc::alloc(layout) };
         assert!(
@@ -129,28 +130,31 @@ pub fn reallocate(
             align,
             result
         );
-        return result as *mut c_void;
-    }
-
-    let layout = alloc::Layout::from_size_align(old_size, align).unwrap();
-    if new_size == 0 {
-        unsafe {
-            alloc::dealloc(pointer as *mut u8, layout);
-        }
-        return ptr::null_mut();
-    }
-
-    let result = unsafe { alloc::realloc(pointer as *mut u8, layout, new_size) };
-    assert!(
-        result != ptr::null_mut(),
-        "reallocate(pointer = {:?}, old_size = {}, new_size = {}, align = {}) -> {:?}",
-        pointer,
-        old_size,
-        new_size,
-        align,
         result
-    );
-
+    } else {
+        let layout = alloc::Layout::from_size_align(old_size, align).unwrap();
+        if new_size == 0 {
+            unsafe {
+                alloc::dealloc(pointer as *mut u8, layout);
+            }
+            ptr::null_mut()
+        } else {
+            let result = unsafe { alloc::realloc(pointer as *mut u8, layout, new_size) };
+            assert!(
+                result != ptr::null_mut(),
+                "reallocate(pointer = {:?}, old_size = {}, new_size = {}, align = {}) -> {:?}",
+                pointer,
+                old_size,
+                new_size,
+                align,
+                result
+            );
+            
+            result
+        }
+    };
+  
+    // println!("---- reallocate -> {:?}", result);
     result as *mut c_void
 }
 
@@ -189,13 +193,17 @@ pub fn mark_object(object: *mut Obj) {
     #[cfg(feature = "debug_log_gc")]
     {
         print!("{:?} mark ", object);
-        print_value(obj_val(object));
+        unsafe { print_value(obj_val(object)); }
         println!();
     }
 
-    unsafe { (*object).is_marked = true; }
+    unsafe {
+        (*object).is_marked = true;
+    }
 
-    unsafe { GC.gray_stack.push(object); }
+    unsafe {
+        GC.gray_stack.push(object);
+    }
 }
 
 pub fn mark_value(value: Value) {
@@ -330,8 +338,9 @@ unsafe fn mark_roots() {
     }
 
     mark_table(&mut vm.globals);
-    let parser: *mut Parser = vm.parser.as_mut().unwrap();
-    (*parser).mark_compiler_roots();
+    if let Some(parser) = vm.parser.as_mut() {
+        parser.mark_compiler_roots();
+    }
     mark_object(vm.init_string as *mut Obj);
 }
 
