@@ -2,6 +2,7 @@ use std::{alloc, ffi::c_void, ptr, vec};
 
 use crate::{
     chunk::free_chunk,
+    compiler::Parser,
     object::{
         Obj, ObjBoundMethod, ObjClass, ObjClosure, ObjFunction, ObjInstance, ObjList, ObjNative,
         ObjString, ObjType, ObjUpvalue,
@@ -73,6 +74,7 @@ const GC_HEAP_GROW_FACTOR: usize = 2;
 // http://gchandbook.org/
 pub struct GarbageCollector {
     pub vm: *mut VM,
+    parser: *mut Parser<'static>,
     bytes_allocated: usize,
     next_gc: usize,
     strings: Table,
@@ -81,6 +83,7 @@ pub struct GarbageCollector {
 }
 pub static mut GC: GarbageCollector = GarbageCollector {
     vm: ptr::null_mut(),
+    parser: ptr::null_mut(),
     bytes_allocated: 0,
     next_gc: 1024 * 1024,
     strings: Table {
@@ -149,11 +152,11 @@ pub fn reallocate(
                 align,
                 result
             );
-            
+
             result
         }
     };
-  
+
     // println!("---- reallocate -> {:?}", result);
     result as *mut c_void
 }
@@ -178,8 +181,16 @@ pub unsafe fn gc_intern_string(string: *mut ObjString) {
     table_set(&mut GC.strings, string, NIL_VAL);
 }
 
-pub unsafe fn gc_find_interned(chars: *const u8, length: i32, hash: u32) -> *mut ObjString {
-    table_find_string(&mut GC.strings, chars, length, hash)
+pub unsafe fn gc_find_interned(chars: &[u8], hash: u32) -> *mut ObjString {
+    table_find_string(&mut GC.strings, chars, hash)
+}
+
+pub unsafe fn gc_track_parser(parser: *mut Parser<'static>) {
+    GC.parser = parser;
+}
+
+pub unsafe fn gc_untrack_parser(_parser: *mut Parser<'static>) {
+    GC.parser = ptr::null_mut();
 }
 
 pub fn mark_object(object: *mut Obj) {
@@ -193,7 +204,9 @@ pub fn mark_object(object: *mut Obj) {
     #[cfg(feature = "debug_log_gc")]
     {
         print!("{:?} mark ", object);
-        unsafe { print_value(obj_val(object)); }
+        unsafe {
+            print_value(obj_val(object));
+        }
         println!();
     }
 
@@ -338,8 +351,8 @@ unsafe fn mark_roots() {
     }
 
     mark_table(&mut vm.globals);
-    if let Some(parser) = vm.parser.as_mut() {
-        parser.mark_compiler_roots();
+    if GC.parser != ptr::null_mut() {
+        (*GC.parser).mark_compiler_roots();
     }
     mark_object(vm.init_string as *mut Obj);
 }

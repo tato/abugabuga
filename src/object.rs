@@ -45,10 +45,10 @@ unsafe fn allocate_string(chars: *mut u8, length: i32, hash: u32) -> *mut ObjStr
     string
 }
 
-unsafe fn hash_string(key: *const u8, length: i32) -> u32 {
+unsafe fn hash_string(key: &[u8]) -> u32 {
     let mut hash = 2166136261u32;
-    for i in 0..length {
-        hash = hash ^ *key.offset(i as isize) as u32;
+    for &byte in key {
+        hash = hash ^ byte as u32;
         hash = hash.wrapping_mul(16777619);
     }
     hash
@@ -276,8 +276,10 @@ pub unsafe fn new_bound_method(receiver: Value, method: *mut ObjClosure) -> *mut
 }
 
 pub unsafe fn take_string(chars: *mut u8, length: i32) -> *mut ObjString {
-    let hash = hash_string(chars, length);
-    let interned = gc_find_interned(chars, length, hash);
+    let chars_slice = slice::from_raw_parts(chars, length as usize);
+
+    let hash = hash_string(chars_slice);
+    let interned = gc_find_interned(chars_slice, hash);
     if interned != ptr::null_mut() {
         free_array!(u8, chars, length + 1);
         return interned;
@@ -285,16 +287,16 @@ pub unsafe fn take_string(chars: *mut u8, length: i32) -> *mut ObjString {
     allocate_string(chars, length, hash)
 }
 
-pub unsafe fn copy_string(chars: *const u8, length: i32) -> *mut ObjString {
-    let hash = hash_string(chars, length);
-    let interned = gc_find_interned(chars, length, hash);
+pub unsafe fn copy_string(chars: &[u8]) -> *mut ObjString {
+    let hash = hash_string(chars);
+    let interned = gc_find_interned(chars, hash);
     if interned != ptr::null_mut() {
         return interned;
     }
-    let heap_chars = allocate!(u8, length + 1);
-    ptr::copy_nonoverlapping(chars, heap_chars, length as usize);
-    *heap_chars.offset(length as isize) = 0;
-    allocate_string(heap_chars, length, hash)
+    let heap_chars = allocate!(u8, chars.len() + 1);
+    ptr::copy_nonoverlapping(chars.as_ptr(), heap_chars, chars.len() as usize);
+    *heap_chars.add(chars.len()) = 0;
+    allocate_string(heap_chars, chars.len() as i32, hash)
 }
 
 pub unsafe fn new_upvalue(slot: *mut Value) -> *mut ObjUpvalue {

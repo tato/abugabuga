@@ -156,12 +156,7 @@ pub unsafe fn table_add_all(from: *const Table, to: *mut Table) {
     }
 }
 
-pub unsafe fn table_find_string(
-    table: *mut Table,
-    chars: *const u8,
-    length: i32,
-    hash: u32,
-) -> *mut ObjString {
+pub unsafe fn table_find_string(table: *mut Table, chars: &[u8], hash: u32) -> *mut ObjString {
     let table = &mut *table;
     if table.count == 0 {
         return ptr::null_mut();
@@ -176,10 +171,9 @@ pub unsafe fn table_find_string(
             }
         } else {
             let key = &mut *entry.key;
-            if key.length == length
+            if key.length == chars.len() as i32
                 && key.hash == hash
-                && slice::from_raw_parts(key.chars, length as usize)
-                    == slice::from_raw_parts(chars, length as usize)
+                && slice::from_raw_parts(key.chars, chars.len() as usize) == chars
             {
                 return key;
             }

@@ -1,8 +1,8 @@
-use std::{mem, ptr, slice, str, u8};
+use std::{mem, ptr, str, u8};
 
 use crate::{
     chunk::{add_constant, write_chunk, Chunk, OpCode},
-    memory::mark_object,
+    memory::{gc_track_parser, gc_untrack_parser, mark_object},
     object::{copy_string, new_function, Obj, ObjFunction},
     scanner::{Scanner, Token, TokenType},
     value::{number_val, obj_val, Value},
@@ -12,15 +12,15 @@ use crate::{
 #[cfg(feature = "debug_print_code")]
 use crate::debug::disassemble_chunk;
 
-pub struct Parser {
-    pub current: Token,
-    pub previous: Token,
+pub struct Parser<'source> {
+    pub current: Token<'source>,
+    pub previous: Token<'source>,
     pub had_error: bool,
     pub panic_mode: bool,
 
-    pub current_compiler: *mut Compiler,
+    pub current_compiler: *mut Compiler<'source>,
     pub current_class: *mut ClassCompiler,
-    scanner: *mut Scanner,
+    scanner: *mut Scanner<'source>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -48,8 +48,8 @@ pub struct ParseRule {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct Local {
-    pub name: Token,
+pub struct Local<'source> {
+    pub name: Token<'source>,
     pub depth: i32,
     pub is_captured: bool,
 }
@@ -69,13 +69,13 @@ pub enum FunctionType {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct Compiler {
-    pub enclosing: *mut Compiler,
+pub struct Compiler<'source> {
+    pub enclosing: *mut Compiler<'source>,
 
     pub function: *mut ObjFunction,
     pub ty: FunctionType,
 
-    pub locals: [Local; UINT8_COUNT],
+    pub locals: [Local<'source>; UINT8_COUNT],
     pub local_count: i32,
     pub upvalues: [Upvalue; UINT8_COUNT],
     pub scope_depth: i32,
@@ -86,7 +86,7 @@ pub struct ClassCompiler {
     pub has_superclass: bool,
 }
 
-impl Parser {
+impl<'source> Parser<'source> {
     unsafe fn current_chunk(&self) -> *mut Chunk {
         &mut (*(*self.current_compiler).function).chunk
     }
@@ -104,10 +104,7 @@ impl Parser {
             eprint!(" at end");
         } else if token.ty == TokenType::Error {
         } else {
-            eprint!(
-                " at '{}'",
-                str::from_utf8_unchecked(slice::from_raw_parts(token.start, token.length as usize))
-            );
+            eprint!(" at '{}'", token.lexeme);
         }
 
         eprintln!(": {}", message);
@@ -132,10 +129,7 @@ impl Parser {
             if self.current.ty != TokenType::Error {
                 break;
             }
-            self.error_at_current(str::from_utf8_unchecked(slice::from_raw_parts(
-                self.current.start,
-                self.current.length as usize,
-            )));
+            self.error_at_current(self.current.lexeme);
         }
     }
 
@@ -222,7 +216,7 @@ impl Parser {
         *(*self.current_chunk()).code.offset(offset as isize + 1) = (jump & 0xff) as u8;
     }
 
-    unsafe fn init_compiler(&mut self, compiler: *mut Compiler, ty: FunctionType) {
+    unsafe fn init_compiler(&mut self, compiler: *mut Compiler<'source>, ty: FunctionType) {
         let compiler = &mut *compiler;
         compiler.enclosing = self.current_compiler;
         compiler.function = ptr::null_mut();
@@ -234,7 +228,7 @@ impl Parser {
 
         if ty != FunctionType::Script {
             (*(*self.current_compiler).function).name =
-                copy_string(self.previous.start, self.previous.length);
+                copy_string(self.previous.lexeme.as_bytes());
         }
 
         let local =
@@ -243,11 +237,9 @@ impl Parser {
         local.depth = 0;
         local.is_captured = false;
         if ty != FunctionType::Function {
-            local.name.start = "this".as_bytes().as_ptr();
-            local.name.length = 4;
+            local.name.lexeme = "this";
         } else {
-            local.name.start = "".as_bytes().as_ptr();
-            local.name.length = 0;
+            local.name.lexeme = "";
         }
     }
 
@@ -329,7 +321,7 @@ impl Parser {
     }
 
     unsafe fn identifier_constant(&mut self, name: &Token) -> u8 {
-        self.make_constant(obj_val(copy_string(name.start, name.length) as *mut Obj))
+        self.make_constant(obj_val(copy_string(name.lexeme.as_bytes()) as *mut Obj))
     }
 
     unsafe fn resolve_local(&mut self, compiler: *mut Compiler, name: &Token) -> i32 {
@@ -385,7 +377,7 @@ impl Parser {
         -1
     }
 
-    unsafe fn add_local(&mut self, name: Token) {
+    unsafe fn add_local(&mut self, name: Token<'source>) {
         if (*self.current_compiler).local_count as usize == UINT8_COUNT {
             self.error("Too many local variables in scope.");
             return;
@@ -520,9 +512,7 @@ impl Parser {
         let constant = self.identifier_constant(&shut_up_borrow_checker);
 
         let mut ty = FunctionType::Method;
-        if self.previous.length == 4
-            && "init".as_bytes() == slice::from_raw_parts(self.previous.start, 4)
-        {
+        if "init" == self.previous.lexeme {
             ty = FunctionType::Initializer;
         }
         self.function(ty);
@@ -775,25 +765,18 @@ impl Parser {
 pub unsafe fn compile(source: &str) -> *mut ObjFunction {
     let mut scanner = Scanner::new(source);
 
+    let uninit_error_msg = "INTERNAL COMPILER ERROR: Uninitialized token.";
     let mut parser = Parser {
-        current: Token {
-            ty: TokenType::Nil,
-            line: 0,
-            length: 0,
-            start: ptr::null_mut(),
-        },
-        previous: Token {
-            ty: TokenType::Nil,
-            line: 0,
-            length: 0,
-            start: ptr::null_mut(),
-        },
+        current: scanner.error_token(uninit_error_msg),
+        previous: scanner.error_token(uninit_error_msg),
         had_error: false,
         panic_mode: false,
         current_compiler: ptr::null_mut(),
         current_class: ptr::null_mut(),
         scanner: &mut scanner,
     };
+
+    gc_track_parser(mem::transmute(&mut parser));
 
     let mut compiler: Compiler = mem::zeroed();
     parser.init_compiler(&mut compiler, FunctionType::Script);
@@ -805,11 +788,15 @@ pub unsafe fn compile(source: &str) -> *mut ObjFunction {
     }
 
     let function = parser.end_compiler();
-    if parser.had_error {
+    let result = if parser.had_error {
         ptr::null_mut()
     } else {
         function
-    }
+    };
+
+    gc_untrack_parser(mem::transmute(&mut parser));
+
+    result
 }
 
 unsafe fn binary(parser: &mut Parser, _can_assign: bool) {
@@ -869,12 +856,11 @@ unsafe fn grouping(parser: &mut Parser, _can_assign: bool) {
 }
 
 unsafe fn number(parser: &mut Parser, _can_assign: bool) {
-    let value: f32 = str::from_utf8_unchecked(slice::from_raw_parts(
-        parser.previous.start,
-        parser.previous.length as usize,
-    ))
-    .parse()
-    .unwrap();
+    let value: f32 = parser
+        .previous
+        .lexeme
+        .parse()
+        .expect("Token should be parseable as 32-bit floating point number.");
     parser.emit_constant(number_val(value as f64));
 }
 
@@ -890,10 +876,9 @@ unsafe fn or(parser: &mut Parser, _can_assign: bool) {
 }
 
 unsafe fn string(parser: &mut Parser, _can_assign: bool) {
-    parser
-        .emit_constant(obj_val(
-            copy_string(parser.previous.start.add(1), parser.previous.length - 2) as *mut Obj,
-        ));
+    let lexeme_len = parser.previous.lexeme.len();
+    let contents_slice = &parser.previous.lexeme.as_bytes()[1..lexeme_len - 1];
+    parser.emit_constant(obj_val(copy_string(contents_slice) as *mut Obj));
 }
 
 unsafe fn list(parser: &mut Parser, _can_assign: bool) {
@@ -961,11 +946,10 @@ unsafe fn variable(parser: &mut Parser, can_assign: bool) {
     named_variable(parser, parser.previous, can_assign);
 }
 
-unsafe fn synthetic_token(parser: &mut Parser, text: &'static str) -> Token {
+unsafe fn synthetic_token(parser: &mut Parser, text: &'static str) -> Token<'static> {
     Token {
         ty: TokenType::Nil,
-        start: text.as_ptr(),
-        length: text.len() as i32,
+        lexeme: text,
         line: parser.previous.line,
     }
 }
@@ -1090,11 +1074,7 @@ static rules: [ParseRule; TOKEN_COUNT] = unsafe {
 };
 
 unsafe fn identifiers_equal(a: &Token, b: &Token) -> bool {
-    if a.length != b.length {
-        return false;
-    }
-    slice::from_raw_parts(a.start, a.length as usize)
-        == slice::from_raw_parts(b.start, b.length as usize)
+    a.lexeme == b.lexeme
 }
 
 unsafe fn get_rule(ty: TokenType) -> *const ParseRule {

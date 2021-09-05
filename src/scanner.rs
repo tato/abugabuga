@@ -1,10 +1,9 @@
 use std::str;
 
 #[derive(Debug, Clone, Copy)]
-pub struct Token {
+pub struct Token<'source> {
     pub ty: TokenType,
-    pub start: *const u8,
-    pub length: i32,
+    pub lexeme: &'source str,
     pub line: i32,
 }
 
@@ -62,16 +61,15 @@ pub enum TokenType {
     Eof,
 }
 
-pub struct Scanner {
-    source: String,
+pub struct Scanner<'source> {
+    source: &'source str,
     start: usize,
     current: usize,
     line: i32,
 }
 
-impl Scanner {
+impl<'source> Scanner<'source> {
     pub fn new(source: &str) -> Scanner {
-        let source = source.to_string();
         Scanner {
             source,
             start: 0,
@@ -177,18 +175,15 @@ impl Scanner {
     fn make_token(&self, ty: TokenType) -> Token {
         Token {
             ty,
-            // TODO: slice instead of start/length
-            start: self.source[self.start..].as_ptr(),
-            length: (self.current - self.start) as i32,
+            lexeme: &self.source[self.start..self.current],
             line: self.line,
         }
     }
 
-    fn error_token(&self, message: &'static str) -> Token {
+    pub fn error_token(&self, message: &'static str) -> Token<'static> {
         Token {
             ty: TokenType::Error,
-            start: message.as_ptr(),
-            length: message.as_bytes().len() as i32,
+            lexeme: message,
             line: self.line,
         }
     }

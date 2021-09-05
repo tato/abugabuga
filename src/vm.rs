@@ -5,7 +5,7 @@ use std::{
 
 use crate::{
     chunk::OpCode,
-    compiler::{compile, Parser},
+    compiler::compile,
     memory::free_objects,
     object::{
         as_bound_method, as_class, as_closure, as_function, as_instance, as_list, as_native,
@@ -41,7 +41,6 @@ pub struct VM {
     pub globals: Table,
     pub init_string: *mut ObjString,
     pub open_upvalues: *mut ObjUpvalue,
-    pub parser: Option<Parser>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,7 +113,6 @@ impl VM {
             },
             init_string: ptr::null_mut(),
             open_upvalues: ptr::null_mut(),
-            parser: None,
         };
         vm
     }
@@ -126,7 +124,7 @@ impl VM {
         init_table(&mut vm.globals);
 
         vm.init_string = ptr::null_mut();
-        vm.init_string = copy_string("init".as_ptr(), 4);
+        vm.init_string = copy_string("init".as_bytes());
 
         vm.define_native("clock", clock_native);
         vm.define_native("sqrt", sqrt_native);
@@ -139,9 +137,7 @@ impl VM {
     }
 
     unsafe fn define_native(&mut self, name: &str, function: NativeFn) {
-        self.push(obj_val(
-            copy_string(name.as_ptr(), name.len() as i32) as *mut Obj
-        ));
+        self.push(obj_val(copy_string(name.as_bytes()) as *mut Obj));
         self.push(obj_val(new_native(function) as *mut Obj));
         table_set(&mut self.globals, as_string(self.stack[0]), self.stack[1]);
         self.pop();
