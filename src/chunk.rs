@@ -54,7 +54,7 @@ pub struct Chunk {
     pub count: i32,
     pub capacity: i32,
     pub code: *mut u8,
-    pub lines: *mut i32,
+    pub lines: *mut u16,
     pub constants: ValueArray,
 }
 
@@ -71,20 +71,20 @@ pub unsafe fn free_chunk(chunk: *mut Chunk) {
     {
         let chunk = &mut *chunk;
         free_array!(u8, chunk.code, chunk.capacity);
-        free_array!(i32, chunk.lines, chunk.capacity);
+        free_array!(u16, chunk.lines, chunk.capacity);
         chunk.constants.free(); // TODO: drop?
     }
     init_chunk(chunk);
 }
 
-pub unsafe fn write_chunk(chunk: *mut Chunk, byte: u8, line: i32) {
+pub unsafe fn write_chunk(chunk: *mut Chunk, byte: u8, line: u16) {
     let chunk = &mut *chunk;
 
     if chunk.capacity < chunk.count + 1 {
         let old_capacity = chunk.capacity;
         chunk.capacity = grow_capacity!(old_capacity);
         chunk.code = grow_array!(u8, chunk.code, old_capacity, chunk.capacity);
-        chunk.lines = grow_array!(i32, chunk.lines, old_capacity, chunk.capacity);
+        chunk.lines = grow_array!(u16, chunk.lines, old_capacity, chunk.capacity);
     }
 
     *chunk.code.offset(chunk.count as isize) = byte;

@@ -3,8 +3,8 @@ use std::str;
 #[derive(Debug, Clone, Copy)]
 pub struct Token<'source> {
     pub ty: TokenType,
+    pub line: u16,
     pub lexeme: &'source str,
-    pub line: i32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -65,7 +65,7 @@ pub struct Scanner<'source> {
     source: &'source str,
     start: usize,
     current: usize,
-    line: i32,
+    line: u16,
 }
 
 impl<'source> Scanner<'source> {
