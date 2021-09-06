@@ -1,14 +1,9 @@
-use std::{ptr, slice, str};
+use std::{ptr, str};
 
-use crate::{
-    chunk::{init_chunk, Chunk},
-    memory::{
+use crate::{chunk::{init_chunk, Chunk}, memory::{
         gc_find_interned, gc_intern_string, gc_track_constant_for_chunk_or_strings_table,
         gc_track_object, gc_untrack_constant_for_chunk_or_strings_table, reallocate,
-    },
-    table::{init_table, Table},
-    value::{as_obj, is_obj, obj_val, print_value, Value, NIL_VAL},
-};
+    }, array::{Array, init_table, Table}, value::{as_obj, is_obj, obj_val, print_value, Value, NIL_VAL}};
 
 macro_rules! allocate_obj {
     ($t:ty, $obj_type:expr) => {
@@ -34,9 +29,8 @@ unsafe fn allocate_object(size: usize, align: usize, ty: ObjType) -> *mut Obj {
     object
 }
 
-unsafe fn allocate_string(chars: *mut u8, length: i32, hash: u32) -> *mut ObjString {
+unsafe fn allocate_string(chars: Array<u8>, hash: u32) -> *mut ObjString {
     let string = allocate_obj!(ObjString, ObjType::String);
-    (*string).length = length;
     (*string).chars = chars;
     (*string).hash = hash;
     gc_track_constant_for_chunk_or_strings_table(obj_val(string as *mut Obj));
@@ -124,7 +118,7 @@ pub unsafe fn as_list(value: Value) -> *mut ObjList {
 
 pub unsafe fn as_rs_str(value: Value) -> &'static str {
     let s = &*as_string(value);
-    str::from_utf8_unchecked(slice::from_raw_parts(s.chars, s.length as usize))
+    str::from_utf8_unchecked(&s.chars[0..s.chars.count()])
 }
 
 unsafe fn is_obj_type(value: Value, ty: ObjType) -> bool {
@@ -171,8 +165,7 @@ pub struct ObjNative {
 #[repr(C)]
 pub struct ObjString {
     pub obj: Obj,
-    pub length: i32,
-    pub chars: *const u8,
+    pub chars: Array<u8>,
     pub hash: u32,
 }
 
@@ -188,8 +181,7 @@ pub struct ObjUpvalue {
 pub struct ObjClosure {
     pub obj: Obj,
     pub function: *mut ObjFunction,
-    pub upvalues: *mut *mut ObjUpvalue,
-    pub upvalue_count: i32,
+    pub upvalues: Array<*mut ObjUpvalue>,
 }
 
 #[repr(C)]
@@ -226,15 +218,15 @@ pub unsafe fn new_list() -> *mut ObjList {
 }
 
 pub unsafe fn new_closure(function: *mut ObjFunction) -> *mut ObjClosure {
-    let upvalues = allocate!(*mut ObjUpvalue, (*function).upvalue_count);
+
+    let mut upvalues = Array::with_capacity((*function).upvalue_count as usize);
     for i in 0..(*function).upvalue_count {
-        *upvalues.offset(i as isize) = ptr::null_mut();
+        upvalues.write(ptr::null_mut());
     }
 
     let closure = allocate_obj!(ObjClosure, ObjType::Closure);
     (*closure).function = function;
     (*closure).upvalues = upvalues;
-    (*closure).upvalue_count = (*function).upvalue_count;
 
     closure
 }
@@ -275,16 +267,14 @@ pub unsafe fn new_bound_method(receiver: Value, method: *mut ObjClosure) -> *mut
     bound
 }
 
-pub unsafe fn take_string(chars: *mut u8, length: i32) -> *mut ObjString {
-    let chars_slice = slice::from_raw_parts(chars, length as usize);
-
-    let hash = hash_string(chars_slice);
-    let interned = gc_find_interned(chars_slice, hash);
+pub unsafe fn take_string(mut chars: Array<u8>) -> *mut ObjString {
+    let hash = hash_string(&chars[0..chars.count()]);
+    let interned = gc_find_interned(&chars[0..chars.count()], hash);
     if interned != ptr::null_mut() {
-        free_array!(u8, chars, length + 1);
+        chars.free();
         return interned;
     }
-    allocate_string(chars, length, hash)
+    allocate_string(chars, hash)
 }
 
 pub unsafe fn copy_string(chars: &[u8]) -> *mut ObjString {
@@ -293,10 +283,8 @@ pub unsafe fn copy_string(chars: &[u8]) -> *mut ObjString {
     if interned != ptr::null_mut() {
         return interned;
     }
-    let heap_chars = allocate!(u8, chars.len() + 1);
-    ptr::copy_nonoverlapping(chars.as_ptr(), heap_chars, chars.len() as usize);
-    *heap_chars.add(chars.len()) = 0;
-    allocate_string(heap_chars, chars.len() as i32, hash)
+    let char_array = Array::from(chars);
+    allocate_string(char_array, hash)
 }
 
 pub unsafe fn new_upvalue(slot: *mut Value) -> *mut ObjUpvalue {
@@ -316,7 +304,7 @@ unsafe fn print_function(function: *mut ObjFunction) {
     let name = &*(*function).name;
     print!(
         "<fn {}>",
-        str::from_utf8_unchecked(slice::from_raw_parts(name.chars, name.length as usize))
+        str::from_utf8_unchecked(&name.chars[0..name.chars.count()])
     );
 }
 

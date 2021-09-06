@@ -1,4 +1,4 @@
-use std::ptr;
+
 
 use crate::object::print_object;
 
@@ -159,45 +159,6 @@ mod value_inner {
 
 pub use value_inner::*;
 
-pub struct ValueArray {
-    pub capacity: i32,
-    pub count: i32,
-    pub values: *mut Value,
-}
-
-impl ValueArray {
-    pub const fn new() -> ValueArray {
-        ValueArray {
-            capacity: 0,
-            count: 0,
-            values: ptr::null_mut(),
-        }
-    }
-
-    pub fn write(&mut self, value: Value) {
-        if self.capacity < self.count + 1 {
-            let old_capacity = self.capacity;
-            self.capacity = grow_capacity!(old_capacity);
-            self.values = grow_array!(Value, self.values, old_capacity, self.capacity);
-        }
-
-        unsafe {
-            *self.values.offset(self.count as isize) = value;
-        }
-        self.count += 1;
-    }
-
-    pub fn free(&mut self) {
-        free_array!(Value, self.values, self.capacity);
-        *self = ValueArray::new();
-    }
-}
-
-// impl Drop for ValueArray {
-//     fn drop(&mut self) {
-//         self.free()
-//     }
-// }
 
 #[cfg(not(feature = "nan_boxing"))]
 pub unsafe fn print_value(value: Value) {

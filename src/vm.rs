@@ -3,22 +3,15 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use crate::{
-    chunk::OpCode,
-    compiler::compile,
-    memory::free_objects,
-    object::{
+use crate::{chunk::OpCode, compiler::compile, memory::free_objects, object::{
         as_bound_method, as_class, as_closure, as_function, as_instance, as_list, as_native,
         as_string, copy_string, is_class, is_instance, is_list, is_string, new_bound_method,
         new_class, new_closure, new_instance, new_list, new_native, new_upvalue, obj_type,
         take_string, NativeFn, Obj, ObjClass, ObjClosure, ObjString, ObjType, ObjUpvalue,
-    },
-    table::{free_table, init_table, table_add_all, table_delete, table_get, table_set, Table},
-    value::{
+    }, array::{Array, free_table, init_table, table_add_all, table_delete, table_get, table_set, Table}, value::{
         as_bool, as_number, bool_val, is_bool, is_nil, is_number, is_obj, number_val, obj_val,
         print_value, values_equal, Value, NIL_VAL,
-    },
-};
+    }};
 
 #[cfg(feature = "debug_trace_execution")]
 use crate::debug::disassemble_instruction;
@@ -29,7 +22,7 @@ pub const STACK_MAX: usize = FRAMES_MAX * u8::MAX as usize;
 #[derive(Clone, Copy)]
 pub struct CallFrame {
     pub closure: *mut ObjClosure,
-    pub ip: *mut u8,
+    pub ip: usize,
     pub slots: *mut Value,
 }
 
@@ -52,7 +45,7 @@ pub enum InterpretResult {
 
 const ZERO_CALL_FRAME: CallFrame = CallFrame {
     closure: ptr::null_mut(),
-    ip: ptr::null_mut(),
+    ip: 0,
     slots: ptr::null_mut(),
 };
 
@@ -75,18 +68,15 @@ unsafe fn _runtime_error(vm: &mut VM) {
     for i in (0..vm.frame_count).rev() {
         let frame = &mut vm.frames[i as usize];
         let function = (*frame.closure).function;
-        let instruction = frame.ip.sub((*function).chunk.code as usize).sub(1) as usize;
-        eprint!("[line {}] in ", *(*function).chunk.lines.add(instruction));
+        let instruction = frame.ip - 1;
+        eprint!("[line {}] in ", (*function).chunk.lines[instruction]);
         if (*function).name == ptr::null_mut() {
             eprintln!("script");
         } else {
             let name = &*(*function).name;
             eprintln!(
                 "{}()",
-                std::str::from_utf8_unchecked(std::slice::from_raw_parts(
-                    name.chars,
-                    name.length as usize
-                ))
+                std::str::from_utf8_unchecked(&name.chars[0..name.chars.count()])
             );
         }
     }
@@ -177,7 +167,7 @@ impl VM {
         let frame = &mut self.frames[self.frame_count as usize];
         self.frame_count += 1;
         frame.closure = closure;
-        frame.ip = (*(*closure).function).chunk.code;
+        frame.ip = 0;
         frame.slots = self.stack_top.sub(arg_count as usize).sub(1);
         true
     }
@@ -307,13 +297,20 @@ impl VM {
         let b = &*as_string(self.peek(0));
         let a = &*as_string(self.peek(1));
 
-        let length = a.length + b.length;
-        let chars = allocate!(u8, length + 1);
-        ptr::copy_nonoverlapping(a.chars, chars, a.length as usize);
-        ptr::copy_nonoverlapping(b.chars, chars.offset(a.length as isize), b.length as usize);
-        *chars.offset(length as isize) = 0;
+        // TODO TODO: Unnecessary extra allocation in "to_owned"
+        let mut concatenated = a.chars[0..a.chars.count()].to_owned();
+        concatenated.extend(&b.chars[0..b.chars.count()]);
 
-        let result = take_string(chars, length);
+        let array = Array::from(concatenated.as_slice());
+
+        // // Previous code
+        // let length = a.length + b.length;
+        // let chars = allocate!(u8, length + 1);
+        // ptr::copy_nonoverlapping(a.chars, chars, a.length as usize);
+        // ptr::copy_nonoverlapping(b.chars, chars.offset(a.length as isize), b.length as usize);
+        // *chars.offset(length as isize) = 0;
+
+        let result = take_string(array);
         self.pop();
         self.pop();
         self.push(obj_val(mem::transmute(result)));
@@ -324,24 +321,24 @@ impl VM {
 
         macro_rules! read_byte {
             () => {{
-                let v = *(*frame).ip;
-                (*frame).ip = (*frame).ip.add(1);
+                let v = (*(*(*frame).closure).function).chunk.code[(*frame).ip];
+                (*frame).ip += 1;
                 v
             }};
         }
         macro_rules! read_short {
             () => {{
-                (*frame).ip = (*frame).ip.offset(2);
-                (*(*frame).ip.offset(-2) as u16) << 8 | *(*frame).ip.offset(-1) as u16
+                (*frame).ip += 2;
+                let up = (*(*(*frame).closure).function).chunk.code[(*frame).ip - 2];
+                let down = (*(*(*frame).closure).function).chunk.code[(*frame).ip - 1];
+                (up as u16) << 8 | down as u16
             }};
         }
         macro_rules! read_constant {
             () => {
-                *(*(*(*frame).closure).function)
+                (*(*(*frame).closure).function)
                     .chunk
-                    .constants
-                    .values
-                    .add(read_byte!() as usize)
+                    .constants[usize::from(read_byte!())]
             };
         }
         macro_rules! read_string {
@@ -378,9 +375,7 @@ impl VM {
                 disassemble_instruction(
                     &mut (*(*(*frame).closure).function).chunk,
                     (*frame)
-                        .ip
-                        .sub((*(*(*frame).closure).function).chunk.code as usize)
-                        as i32,
+                        .ip,
                 );
             }
 
@@ -427,10 +422,7 @@ impl VM {
                         runtime_error!(
                             self,
                             "Undefined variable '{}'.",
-                            std::str::from_utf8_unchecked(std::slice::from_raw_parts(
-                                (*name).chars,
-                                (*name).length as usize
-                            ))
+                            std::str::from_utf8_unchecked(&(*name).chars[0..(*name).chars.count()])
                         );
                         return InterpretResult::RuntimeError;
                     }
@@ -449,21 +441,18 @@ impl VM {
                         runtime_error!(
                             self,
                             "Undefined variable '{}'.",
-                            std::str::from_utf8_unchecked(std::slice::from_raw_parts(
-                                (*name).chars,
-                                (*name).length as usize
-                            ))
+                            std::str::from_utf8_unchecked(&(*name).chars[0..(*name).chars.count()])
                         );
                         return InterpretResult::RuntimeError;
                     }
                 }
                 i if i == OpCode::GetUpvalue as u8 => {
                     let slot = read_byte!();
-                    self.push(*(**(*(*frame).closure).upvalues.offset(slot as isize)).location);
+                    self.push(*(*(*(*frame).closure).upvalues[usize::from(slot)]).location);
                 }
                 i if i == OpCode::SetUpvalue as u8 => {
                     let slot = read_byte!();
-                    *(**(*(*frame).closure).upvalues.offset(slot as isize)).location = self.peek(0);
+                    *(*(*(*frame).closure).upvalues[usize::from(slot)]).location = self.peek(0);
                 }
                 i if i == OpCode::GetProperty as u8 => {
                     if !is_instance(self.peek(0)) {
@@ -559,17 +548,17 @@ impl VM {
                 }
                 i if i == OpCode::Jump as u8 => {
                     let offset = read_short!();
-                    (*frame).ip = (*frame).ip.offset(offset as isize);
+                    (*frame).ip += usize::from(offset);
                 }
                 i if i == OpCode::JumpIfFalse as u8 => {
                     let offset = read_short!();
                     if is_falsey(self.peek(0)) {
-                        (*frame).ip = (*frame).ip.offset(offset as isize);
+                        (*frame).ip += usize::from(offset);
                     }
                 }
                 i if i == OpCode::Loop as u8 => {
                     let offset = read_short!();
-                    (*frame).ip = (*frame).ip.offset(-(offset as isize));
+                    (*frame).ip -= usize::from(offset);
                 }
                 i if i == OpCode::Call as u8 => {
                     let arg_count = read_byte!();
@@ -600,15 +589,14 @@ impl VM {
                     let function = as_function(read_constant!());
                     let closure = new_closure(function);
                     self.push(obj_val(closure as *mut Obj));
-                    for i in 0..(*closure).upvalue_count {
+                    for i in 0..(*closure).upvalues.count() {
                         let is_local = read_byte!();
                         let index = read_byte!();
                         if is_local == 1 {
-                            *(*closure).upvalues.offset(i as isize) =
+                            (*closure).upvalues[i] =
                                 self.capture_upvalue((*frame).slots.offset(index as isize));
                         } else {
-                            *(*closure).upvalues.offset(i as isize) =
-                                *(*(*frame).closure).upvalues.offset(index as isize);
+                            (*closure).upvalues[i] = (*(*frame).closure).upvalues[usize::from(index)];
                         }
                     }
                 }

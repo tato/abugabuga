@@ -12,9 +12,9 @@ mod compiler;
 mod debug;
 mod object;
 mod scanner;
-mod table;
 mod value;
 mod vm;
+mod array;
 
 #[cfg(test)]
 mod test;

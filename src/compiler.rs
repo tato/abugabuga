@@ -166,7 +166,7 @@ impl<'source> Parser<'source> {
     unsafe fn emit_loop(&mut self, loop_start: i32) {
         self.emit_byte(OpCode::Loop as u8);
 
-        let offset = (*self.current_chunk()).count - loop_start + 2;
+        let offset = (*self.current_chunk()).code.count() as i32 - loop_start + 2;
         if offset > u16::MAX as i32 {
             self.error("Loop body too large.");
         }
@@ -179,7 +179,7 @@ impl<'source> Parser<'source> {
         self.emit_byte(instruction);
         self.emit_byte(0xff);
         self.emit_byte(0xff);
-        (*self.current_chunk()).count - 2
+        (*self.current_chunk()).code.count() as i32 - 2
     }
 
     unsafe fn emit_return(&self) {
@@ -206,14 +206,14 @@ impl<'source> Parser<'source> {
     }
 
     unsafe fn patch_jump(&mut self, offset: i32) {
-        let jump = (*self.current_chunk()).count - offset - 2;
+        let jump = (*self.current_chunk()).code.count() as i32 - offset - 2;
 
         if jump > u16::MAX.into() {
             self.error("Too much code to jump over.");
         }
 
-        *(*self.current_chunk()).code.offset(offset as isize) = ((jump >> 8) & 0xff) as u8;
-        *(*self.current_chunk()).code.offset(offset as isize + 1) = (jump & 0xff) as u8;
+        (*self.current_chunk()).code[offset as usize] = ((jump >> 8) & 0xff) as u8;
+        (*self.current_chunk()).code[offset as usize] = (jump & 0xff) as u8;
     }
 
     unsafe fn init_compiler(&mut self, compiler: *mut Compiler<'source>, ty: FunctionType) {
@@ -609,7 +609,7 @@ impl<'source> Parser<'source> {
             self.expression_statement();
         }
 
-        let mut loop_start = (*self.current_chunk()).count;
+        let mut loop_start = (*self.current_chunk()).code.count() as i32;
         let mut exit_jump = None;
         if !self.mtch(TokenType::Semicolon) {
             self.expression();
@@ -621,7 +621,7 @@ impl<'source> Parser<'source> {
 
         if !self.mtch(TokenType::RightParen) {
             let body_jump = self.emit_jump(OpCode::Jump as u8);
-            let increment_start = (*self.current_chunk()).count;
+            let increment_start = (*self.current_chunk()).code.count() as i32;
             self.expression();
             self.emit_byte(OpCode::Pop as u8);
             self.consume(TokenType::RightParen, "Expect ')' after for clauses.");
@@ -687,7 +687,7 @@ impl<'source> Parser<'source> {
     }
 
     unsafe fn while_statement(&mut self) {
-        let loop_start = (*self.current_chunk()).count;
+        let loop_start = (*self.current_chunk()).code.count() as i32;
 
         self.consume(TokenType::LeftParen, "Expect '(' after 'while'.");
         self.expression();

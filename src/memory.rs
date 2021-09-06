@@ -1,16 +1,9 @@
 use std::{alloc, ffi::c_void, ptr, vec};
 
-use crate::{
-    chunk::free_chunk,
-    compiler::Parser,
-    object::{
+use crate::{chunk::free_chunk, compiler::Parser, object::{
         Obj, ObjBoundMethod, ObjClass, ObjClosure, ObjFunction, ObjInstance, ObjList, ObjNative,
         ObjString, ObjType, ObjUpvalue,
-    },
-    table::{free_table, mark_table, table_find_string, table_remove_white, table_set, Table},
-    value::{as_obj, is_obj, Value, ValueArray, NIL_VAL},
-    vm::VM,
-};
+    }, array::{Array, free_table, mark_table, table_find_string, table_remove_white, table_set, Table}, value::{as_obj, is_obj, Value, NIL_VAL}, vm::VM};
 
 #[cfg(feature = "debug_log_gc")]
 use crate::value::{obj_val, print_value};
@@ -31,38 +24,6 @@ macro_rules! free {
         crate::memory::reallocate(
             $pointer as *mut std::ffi::c_void,
             std::mem::size_of::<$t>(),
-            0,
-            std::mem::align_of::<$t>(),
-        )
-    };
-}
-
-macro_rules! grow_capacity {
-    ($capacity:expr) => {
-        if $capacity < 8 {
-            8
-        } else {
-            $capacity * 2
-        }
-    };
-}
-
-macro_rules! grow_array {
-    ($t:ty, $pointer:expr, $old_count:expr, $new_count:expr) => {
-        crate::memory::reallocate(
-            $pointer as *mut std::ffi::c_void,
-            std::mem::size_of::<$t>() * $old_count as usize,
-            std::mem::size_of::<$t>() * $new_count as usize,
-            std::mem::align_of::<$t>(),
-        ) as *mut $t
-    };
-}
-
-macro_rules! free_array {
-    ($t:ty, $pointer:expr, $old_count:expr) => {
-        crate::memory::reallocate(
-            $pointer as *mut std::ffi::c_void,
-            std::mem::size_of::<$t>() * $old_count as usize,
             0,
             std::mem::align_of::<$t>(),
         )
@@ -225,9 +186,9 @@ pub fn mark_value(value: Value) {
     }
 }
 
-fn mark_array(array: *mut ValueArray) {
-    for i in 0..unsafe { (*array).count } {
-        mark_value(unsafe { *(*array).values.offset(i as isize) });
+fn mark_array(array: *mut Array<Value>) {
+    for i in 0..unsafe { (*array).count() } {
+        mark_value(unsafe { (*array)[i] });
     }
 }
 
@@ -249,8 +210,8 @@ unsafe fn blacken_object(object: *mut Obj) {
         ObjType::Closure => {
             let closure = object as *mut ObjClosure;
             mark_object((*closure).function as *mut Obj);
-            for i in 0..(*closure).upvalue_count {
-                mark_object((*closure).upvalues.offset(i as isize) as *mut Obj);
+            for i in 0..(*closure).upvalues.count() {
+                mark_object((*closure).upvalues[i] as *mut Obj);
             }
         }
         ObjType::Function => {
@@ -301,7 +262,7 @@ unsafe fn free_object(object: *mut Obj) {
         }
         ObjType::String => {
             let string = object as *mut ObjString;
-            free_array!(u8, (*string).chars, (*string).length + 1);
+            (*string).chars.free();
             free!(ObjString, object);
         }
         ObjType::Upvalue => {
@@ -309,11 +270,7 @@ unsafe fn free_object(object: *mut Obj) {
         }
         ObjType::Closure => {
             let closure = object as *mut ObjClosure;
-            free_array!(
-                *mut ObjUpvalue,
-                (*closure).upvalues,
-                (*closure).upvalue_count
-            );
+            (*closure).upvalues.free();
             free!(ObjClosure, object);
         }
         ObjType::Class => {
