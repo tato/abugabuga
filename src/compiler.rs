@@ -252,7 +252,7 @@ impl<'source> Parser<'source> {
             if !self.had_error {
                 let name = if (*function).name != ptr::null_mut() {
                     let name = &*(*function).name;
-                    str::from_utf8_unchecked(&name.chars[0..name.chars.count()])
+                    str::from_utf8_unchecked(&name.chars[..])
                 } else {
                     "<script>"
                 };

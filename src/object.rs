@@ -118,7 +118,7 @@ pub unsafe fn as_list(value: Value) -> *mut ObjList {
 
 pub unsafe fn as_rs_str(value: Value) -> &'static str {
     let s = &*as_string(value);
-    str::from_utf8_unchecked(&s.chars[0..s.chars.count()])
+    str::from_utf8_unchecked(&s.chars[..])
 }
 
 unsafe fn is_obj_type(value: Value, ty: ObjType) -> bool {
@@ -268,8 +268,8 @@ pub unsafe fn new_bound_method(receiver: Value, method: *mut ObjClosure) -> *mut
 }
 
 pub unsafe fn take_string(mut chars: Array<u8>) -> *mut ObjString {
-    let hash = hash_string(&chars[0..chars.count()]);
-    let interned = gc_find_interned(&chars[0..chars.count()], hash);
+    let hash = hash_string(&chars[..]);
+    let interned = gc_find_interned(&chars[..], hash);
     if interned != ptr::null_mut() {
         chars.free();
         return interned;
@@ -304,7 +304,7 @@ unsafe fn print_function(function: *mut ObjFunction) {
     let name = &*(*function).name;
     print!(
         "<fn {}>",
-        str::from_utf8_unchecked(&name.chars[0..name.chars.count()])
+        str::from_utf8_unchecked(&name.chars[..])
     );
 }
 

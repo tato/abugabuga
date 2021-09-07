@@ -1,4 +1,4 @@
-use std::{ops::{Index, IndexMut, Range}, ptr, slice};
+use std::{ops::{Index, IndexMut, Range, RangeFull}, ptr, slice};
 
 
 use crate::{
@@ -107,7 +107,7 @@ impl<T> Index<Range<usize>> for Array<T> {
     type Output = [T];
 
     fn index(&self, index: Range<usize>) -> &Self::Output {
-        if index.start >= index.end {
+        if index.end <= index.start {
             return &[];
         }
         assert!(
@@ -117,6 +117,14 @@ impl<T> Index<Range<usize>> for Array<T> {
         unsafe {
             slice::from_raw_parts(self.values.add(index.start), index.end - index.start)
         }
+    }
+}
+
+impl<T> Index<RangeFull> for Array<T> {
+    type Output = [T];
+
+    fn index(&self, _index: RangeFull) -> &Self::Output {
+        &self[0..self.count]
     }
 }
 

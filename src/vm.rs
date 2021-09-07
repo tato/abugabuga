@@ -76,7 +76,7 @@ unsafe fn _runtime_error(vm: &mut VM) {
             let name = &*(*function).name;
             eprintln!(
                 "{}()",
-                std::str::from_utf8_unchecked(&name.chars[0..name.chars.count()])
+                std::str::from_utf8_unchecked(&name.chars[..])
             );
         }
     }
@@ -298,8 +298,8 @@ impl VM {
         let a = &*as_string(self.peek(1));
 
         // TODO TODO: Unnecessary extra allocation in "to_owned"
-        let mut concatenated = a.chars[0..a.chars.count()].to_owned();
-        concatenated.extend(&b.chars[0..b.chars.count()]);
+        let mut concatenated = a.chars[..].to_owned();
+        concatenated.extend(&b.chars[..]);
 
         let array = Array::from(concatenated.as_slice());
 
@@ -422,7 +422,7 @@ impl VM {
                         runtime_error!(
                             self,
                             "Undefined variable '{}'.",
-                            std::str::from_utf8_unchecked(&(*name).chars[0..(*name).chars.count()])
+                            std::str::from_utf8_unchecked(&(*name).chars[..])
                         );
                         return InterpretResult::RuntimeError;
                     }
