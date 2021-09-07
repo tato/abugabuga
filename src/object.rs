@@ -3,7 +3,7 @@ use std::{ptr, str};
 use crate::{chunk::{init_chunk, Chunk}, memory::{
         gc_find_interned, gc_intern_string, gc_track_constant_for_chunk_or_strings_table,
         gc_track_object, gc_untrack_constant_for_chunk_or_strings_table, reallocate,
-    }, array::{Array, init_table, Table}, value::{as_obj, is_obj, obj_val, print_value, Value, NIL_VAL}};
+    }, array::{Array, Table}, value::{as_obj, is_obj, obj_val, print_value, Value, NIL_VAL}};
 
 macro_rules! allocate_obj {
     ($t:ty, $obj_type:expr) => {
@@ -249,14 +249,14 @@ pub unsafe fn new_native(function: NativeFn) -> *mut ObjNative {
 pub unsafe fn new_class(name: *mut ObjString) -> *mut ObjClass {
     let class = allocate_obj!(ObjClass, ObjType::Class);
     (*class).name = name;
-    init_table(&mut (*class).methods);
+    (*class).methods = Table::new();
     class
 }
 
 pub unsafe fn new_instance(class: *mut ObjClass) -> *mut ObjInstance {
     let instance = allocate_obj!(ObjInstance, ObjType::Instance);
     (*instance).class = class;
-    init_table(&mut (*instance).fields);
+    (*instance).fields = Table::new();
     instance
 }
 

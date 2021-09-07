@@ -3,7 +3,7 @@ use std::{alloc, ffi::c_void, ptr, vec};
 use crate::{chunk::free_chunk, compiler::Parser, object::{
         Obj, ObjBoundMethod, ObjClass, ObjClosure, ObjFunction, ObjInstance, ObjList, ObjNative,
         ObjString, ObjType, ObjUpvalue,
-    }, array::{Array, free_table, mark_table, table_find_string, table_remove_white, table_set, Table}, value::{as_obj, is_obj, Value, NIL_VAL}, vm::VM};
+    }, array::{Array, Table}, value::{as_obj, is_obj, Value, NIL_VAL}, vm::VM};
 
 #[cfg(feature = "debug_log_gc")]
 use crate::value::{obj_val, print_value};
@@ -47,11 +47,7 @@ pub static mut GC: GarbageCollector = GarbageCollector {
     parser: ptr::null_mut(),
     bytes_allocated: 0,
     next_gc: 1024 * 1024,
-    strings: Table {
-        capacity: 0,
-        count: 0,
-        entries: ptr::null_mut(),
-    },
+    strings: Table::new(),
     objects: ptr::null_mut(),
     gray_stack: vec![],
 };
@@ -139,11 +135,11 @@ pub unsafe fn gc_track_object(object: *mut Obj) -> *mut Obj {
 }
 
 pub unsafe fn gc_intern_string(string: *mut ObjString) {
-    table_set(&mut GC.strings, string, NIL_VAL);
+    GC.strings.set(string, NIL_VAL);
 }
 
 pub unsafe fn gc_find_interned(chars: &[u8], hash: u32) -> *mut ObjString {
-    table_find_string(&mut GC.strings, chars, hash)
+    GC.strings.find_string(chars, hash)
 }
 
 pub unsafe fn gc_track_parser(parser: *mut Parser<'static>) {
@@ -223,12 +219,12 @@ unsafe fn blacken_object(object: *mut Obj) {
         ObjType::Class => {
             let class = object as *mut ObjClass;
             mark_object((*class).name as *mut Obj);
-            mark_table(&mut (*class).methods);
+            (*class).methods.mark_table();
         }
         ObjType::Instance => {
             let instance = object as *mut ObjInstance;
             mark_object((*instance).class as *mut Obj);
-            mark_table(&mut (*instance).fields);
+            (*instance).fields.mark_table();
         }
         ObjType::BoundMethod => {
             let bound = object as *mut ObjBoundMethod;
@@ -275,12 +271,12 @@ unsafe fn free_object(object: *mut Obj) {
         }
         ObjType::Class => {
             let class = object as *mut ObjClass;
-            free_table(&mut (*class).methods);
+            (*class).methods.free();
             free!(ObjClass, object);
         }
         ObjType::Instance => {
             let instance = object as *mut ObjInstance;
-            free_table(&mut (*instance).fields);
+            (*instance).fields.free();
             free!(ObjInstance, object);
         }
         ObjType::BoundMethod => {
@@ -307,7 +303,7 @@ unsafe fn mark_roots() {
         upvalue = (*upvalue).next;
     }
 
-    mark_table(&mut vm.globals);
+    vm.globals.mark_table();
     if GC.parser != ptr::null_mut() {
         (*GC.parser).mark_compiler_roots();
     }
@@ -352,7 +348,7 @@ unsafe fn collect_garbage() {
 
     mark_roots();
     trace_references();
-    table_remove_white(&mut GC.strings);
+    GC.strings.remove_white();
     sweep();
 
     GC.next_gc = GC.bytes_allocated * GC_HEAP_GROW_FACTOR;

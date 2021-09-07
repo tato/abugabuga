@@ -1,6 +1,5 @@
 use std::{ops::{Index, IndexMut, Range, RangeFull}, ptr, slice};
 
-
 use crate::{
     memory::{mark_object, mark_value},
     object::{Obj, ObjString},
@@ -78,6 +77,7 @@ impl<T> Array<T> {
         self.count
     }
 
+    // TODO: impl Drop
     pub fn free(&mut self) {
         free_array!(T, self.values, self.capacity);
     }
@@ -150,11 +150,10 @@ impl<T> From<&[T]> for Array<T> {
 
 const TABLE_MAX_LOAD: f32 = 0.75;
 
-#[derive(Debug)]
 pub struct Table {
-    pub count: usize,
-    pub capacity: usize,
-    pub entries: *mut Entry,
+    count: usize,
+    capacity: usize,
+    entries: *mut Entry,
 }
 
 pub struct Entry {
@@ -162,26 +161,134 @@ pub struct Entry {
     value: Value,
 }
 
-pub unsafe fn init_table(table: *mut Table) {
-    let table = &mut *table;
-    table.count = 0;
-    table.capacity = 0;
-    table.entries = ptr::null_mut();
+impl Table {
+    pub const fn new() -> Table {
+        Table {
+            capacity: 0,
+            count: 0,
+            entries: ptr::null_mut(),
+        }
+    }
+
+    pub fn get(&mut self, key: *mut ObjString) -> Option<Value> {
+        if self.count == 0 {
+            return None;
+        }
+    
+        let entry = unsafe { &mut *find_entry(self.entries, self.capacity, key) };
+        if entry.key == ptr::null_mut() {
+            return None;
+        }
+    
+        Some(entry.value)
+    }
+
+    pub fn set(&mut self, key: *mut ObjString, value: Value) -> bool {
+
+        if self.count as f32 + 1.0 > self.capacity as f32 * TABLE_MAX_LOAD {
+            let capacity = grow_capacity(self.capacity);
+            unsafe { adjust_capacity(self, capacity) };
+        }
+
+        let entry = unsafe { &mut *find_entry(self.entries, self.capacity, key) };
+        let is_new_key = entry.key == ptr::null_mut();
+        if is_new_key && is_nil(entry.value) {
+            self.count += 1;
+        }
+
+        entry.key = key;
+        entry.value = value;
+        is_new_key
+    }
+
+    pub fn delete(&mut self, key: *mut ObjString) -> bool {
+
+        if self.count == 0 {
+            return false;
+        }
+
+        let entry = unsafe { &mut *find_entry(self.entries, self.capacity, key) };
+        if entry.key == ptr::null_mut() {
+            return false;
+        }
+
+        entry.key = ptr::null_mut();
+        entry.value = bool_val(true);
+
+        true
+    }
+
+    pub fn add_all(&mut self, from: *const Table) {
+        let from = unsafe { &*from };
+        for i in 0..from.capacity {
+            let entry = unsafe { &*from.entries.offset(i as isize) };
+            if entry.key != ptr::null_mut() {
+                self.set(entry.key, entry.value);
+            }
+        }
+    }
+    
+    pub fn find_string(&mut self, chars: &[u8], hash: u32) -> *mut ObjString {
+        if self.count == 0 {
+            return ptr::null_mut();
+        }
+    
+        let mut index = hash & ((self.capacity - 1) as u32);
+        loop {
+            let entry = unsafe { &mut *self.entries.offset(index as isize) };
+            if entry.key == ptr::null_mut() {
+                if is_nil(entry.value) {
+                    return ptr::null_mut();
+                }
+            } else {
+                let key = unsafe { &mut *entry.key };
+                if key.chars.count() == chars.len()
+                    && key.hash == hash
+                    && &key.chars[0..key.chars.count()] == chars
+                {
+                    return key;
+                }
+            }
+    
+            index = (index + 1) & ((self.capacity - 1) as u32);
+        }
+    }
+    
+    pub fn remove_white(&mut self) {
+        for i in 0..self.capacity {
+            unsafe {
+                let entry = self.entries.offset(i as isize);
+                if (*entry).key != ptr::null_mut() && !(*(*entry).key).obj.is_marked {
+                    self.delete((*entry).key);
+                }
+            }
+        }
+    }
+    
+    pub fn mark_table(&mut self) {
+        for i in 0..self.capacity {
+            unsafe {
+                let entry = self.entries.offset(i as isize);
+                mark_object((*entry).key as *mut Obj);
+                mark_value((*entry).value);
+            }
+        }
+    }
+
+    // TODO: impl Drop
+    pub fn free(&mut self) {
+        free_array!(Entry, self.entries, self.capacity);
+    }
 }
 
-pub unsafe fn free_table(table: *mut Table) {
-    let table = &mut *table;
-    free_array!(Entry, table.entries, table.capacity);
-    init_table(table);
-}
+fn find_entry(entries: *mut Entry, capacity: usize, key: *mut ObjString) -> *mut Entry {
+    let key = unsafe { &mut *key };
 
-unsafe fn find_entry(entries: *mut Entry, capacity: usize, key: *mut ObjString) -> *mut Entry {
-    let key = &mut *key;
     let mut index = key.hash & ((capacity - 1) as u32);
     let mut tombstone = ptr::null_mut();
 
     loop {
-        let entry = &mut *entries.offset(index as isize);
+        let entry = unsafe { &mut *entries.add(index as usize) };
         if entry.key == ptr::null_mut() {
             if is_nil(entry.value) {
                 // empty entry
@@ -230,111 +337,4 @@ unsafe fn adjust_capacity(table: *mut Table, capacity: usize) {
     free_array!(Entry, table.entries, table.capacity);
     table.entries = entries;
     table.capacity = capacity;
-}
-
-pub unsafe fn table_get(table: *mut Table, key: *mut ObjString, value: *mut Value) -> bool {
-    let table = &mut *table;
-
-    if table.count == 0 {
-        return false;
-    }
-
-    let entry = &mut *find_entry(table.entries, table.capacity, key);
-    if entry.key == ptr::null_mut() {
-        return false;
-    }
-
-    *value = entry.value;
-    true
-}
-
-pub unsafe fn table_set(table: *mut Table, key: *mut ObjString, value: Value) -> bool {
-    let table = &mut *table;
-
-    if table.count as f32 + 1.0 > table.capacity as f32 * TABLE_MAX_LOAD {
-        let capacity = grow_capacity(table.capacity);
-        adjust_capacity(table, capacity);
-    }
-
-    let entry = &mut *find_entry(table.entries, table.capacity, key);
-    let is_new_key = entry.key == ptr::null_mut();
-    if is_new_key && is_nil(entry.value) {
-        table.count += 1;
-    }
-
-    entry.key = key;
-    entry.value = value;
-    is_new_key
-}
-
-pub unsafe fn table_delete(table: *mut Table, key: *mut ObjString) -> bool {
-    let table = &mut *table;
-
-    if table.count == 0 {
-        return false;
-    }
-
-    let entry = &mut *find_entry(table.entries, table.capacity, key);
-    if entry.key == ptr::null_mut() {
-        return false;
-    }
-
-    entry.key = ptr::null_mut();
-    entry.value = bool_val(true);
-
-    true
-}
-
-pub unsafe fn table_add_all(from: *const Table, to: *mut Table) {
-    let from = &*from;
-    for i in 0..from.capacity {
-        let entry = &*from.entries.offset(i as isize);
-        if entry.key != ptr::null_mut() {
-            table_set(to, entry.key, entry.value);
-        }
-    }
-}
-
-pub unsafe fn table_find_string(table: *mut Table, chars: &[u8], hash: u32) -> *mut ObjString {
-    let table = &mut *table;
-    if table.count == 0 {
-        return ptr::null_mut();
-    }
-
-    let mut index = hash & ((table.capacity - 1) as u32);
-    loop {
-        let entry = &mut *table.entries.offset(index as isize);
-        if entry.key == ptr::null_mut() {
-            if is_nil(entry.value) {
-                return ptr::null_mut();
-            }
-        } else {
-            let key = &mut *entry.key;
-            if key.chars.count() == chars.len()
-                && key.hash == hash
-                && &key.chars[0..key.chars.count()] == chars
-            {
-                return key;
-            }
-        }
-
-        index = (index + 1) & ((table.capacity - 1) as u32);
-    }
-}
-
-pub unsafe fn table_remove_white(table: *mut Table) {
-    for i in 0..(*table).capacity {
-        let entry = (*table).entries.offset(i as isize);
-        if (*entry).key != ptr::null_mut() && !(*(*entry).key).obj.is_marked {
-            table_delete(table, (*entry).key);
-        }
-    }
-}
-
-pub unsafe fn mark_table(table: *mut Table) {
-    for i in 0..(*table).capacity {
-        let entry = (*table).entries.offset(i as isize);
-        mark_object((*entry).key as *mut Obj);
-        mark_value((*entry).value);
-    }
 }

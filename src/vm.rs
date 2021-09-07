@@ -8,7 +8,7 @@ use crate::{chunk::OpCode, compiler::compile, memory::free_objects, object::{
         as_string, copy_string, is_class, is_instance, is_list, is_string, new_bound_method,
         new_class, new_closure, new_instance, new_list, new_native, new_upvalue, obj_type,
         take_string, NativeFn, Obj, ObjClass, ObjClosure, ObjString, ObjType, ObjUpvalue,
-    }, array::{Array, free_table, init_table, table_add_all, table_delete, table_get, table_set, Table}, value::{
+    }, array::{Array, Table}, value::{
         as_bool, as_number, bool_val, is_bool, is_nil, is_number, is_obj, number_val, obj_val,
         print_value, values_equal, Value, NIL_VAL,
     }};
@@ -96,11 +96,7 @@ impl VM {
             frame_count: 0,
             stack: [NIL_VAL; STACK_MAX],
             stack_top: ptr::null_mut(),
-            globals: Table {
-                count: 0,
-                capacity: 0,
-                entries: ptr::null_mut(),
-            },
+            globals: Table::new(),
             init_string: ptr::null_mut(),
             open_upvalues: ptr::null_mut(),
         };
@@ -111,7 +107,7 @@ impl VM {
         let vm = self;
         vm.reset_stack();
 
-        init_table(&mut vm.globals);
+        vm.globals = Table::new();
 
         vm.init_string = ptr::null_mut();
         vm.init_string = copy_string("init".as_bytes());
@@ -129,7 +125,7 @@ impl VM {
     unsafe fn define_native(&mut self, name: &str, function: NativeFn) {
         self.push(obj_val(copy_string(name.as_bytes()) as *mut Obj));
         self.push(obj_val(new_native(function) as *mut Obj));
-        table_set(&mut self.globals, as_string(self.stack[0]), self.stack[1]);
+        self.globals.set(as_string(self.stack[0]), self.stack[1]);
         self.pop();
         self.pop();
     }
@@ -184,8 +180,7 @@ impl VM {
                     let class = as_class(callee);
                     *self.stack_top.offset(-arg_count as isize - 1) =
                         obj_val(new_instance(class) as *mut Obj);
-                    let mut initializer = NIL_VAL;
-                    if table_get(&mut (*class).methods, self.init_string, &mut initializer) {
+                    if let Some(initializer) = (*class).methods.get(self.init_string) {
                         return self.call(as_closure(initializer), arg_count);
                     } else if arg_count != 0 {
                         runtime_error!(self, "Expected 0 arguments but got {}.", arg_count);
@@ -214,12 +209,15 @@ impl VM {
         name: *mut ObjString,
         arg_count: i32,
     ) -> bool {
-        let mut method = NIL_VAL;
-        if !table_get(&mut (*class).methods, name, &mut method) {
-            runtime_error!(self, "Undefined property '{}'.", "name->chars"); // todo
-            return false;
+        let method = (*class).methods.get(name);
+        match method {
+            Some(method) => self.call(as_closure(method), arg_count),
+            None => {
+                runtime_error!(self, "Undefined property '{}'.", "name->chars"); // todo
+                false
+            }
         }
-        self.call(as_closure(method), arg_count)
+        
     }
 
     unsafe fn invoke(&mut self, name: *mut ObjString, arg_count: i32) -> bool {
@@ -232,8 +230,7 @@ impl VM {
 
         let instance = as_instance(receiver);
 
-        let mut value = NIL_VAL;
-        if table_get(&mut (*instance).fields, name, &mut value) {
+        if let Some(value) = (*instance).fields.get(name) {
             *self.stack_top.offset(-arg_count as isize - 1) = value;
             return self.call_value(value, arg_count);
         }
@@ -242,11 +239,14 @@ impl VM {
     }
 
     unsafe fn bind_method(&mut self, class: *mut ObjClass, name: *mut ObjString) -> bool {
-        let mut method = NIL_VAL;
-        if !table_get(&mut (*class).methods, name, &mut method) {
-            runtime_error!(self, "Undefined property '{}'.", "name->chars");
-            return false;
-        }
+
+        let method = match (*class).methods.get(name) {
+            None => {
+                runtime_error!(self, "Undefined property '{}'.", "name->chars");
+                return false;
+            }
+            Some(method) => method
+        };
 
         let bound = new_bound_method(self.peek(0), as_closure(method));
         self.pop();
@@ -289,7 +289,7 @@ impl VM {
     unsafe fn define_method(&mut self, name: *mut ObjString) {
         let method = self.peek(0);
         let class = as_class(self.peek(1));
-        table_set(&mut (*class).methods, name, method);
+        (*class).methods.set(name, method);
         self.pop();
     }
 
@@ -417,27 +417,33 @@ impl VM {
                 }
                 i if i == OpCode::GetGlobal as u8 => {
                     let name = read_string!();
-                    let mut value = NIL_VAL; // @todo uninitialized
-                    if !table_get(&mut self.globals, name, &mut value) {
-                        runtime_error!(
-                            self,
-                            "Undefined variable '{}'.",
-                            std::str::from_utf8_unchecked(&(*name).chars[..])
-                        );
-                        return InterpretResult::RuntimeError;
-                    }
+                    let value = match self.globals.get(name) {
+                        None => {
+                            runtime_error!(
+                                self,
+                                "Undefined variable '{}'.",
+                                std::str::from_utf8_unchecked(&(*name).chars[..])
+                            );
+                            return InterpretResult::RuntimeError;
+                        }
+                        Some(value) => value,
+                    };
+                    
                     self.push(value);
                 }
                 i if i == OpCode::DefineGlobal as u8 => {
                     let name = read_string!();
-                    table_set(&mut self.globals, name, self.peek(0));
+                    let shut_up_borrow_checker = self.peek(0);
+                    self.globals.set(name, shut_up_borrow_checker);
                     self.pop();
                 }
                 i if i == OpCode::SetGlobal as u8 => {
                     let name = read_string!();
-                    if table_set(&mut self.globals, name, self.peek(0)) {
+                    
+                    let shut_up_borrow_checker = self.peek(0);
+                    if self.globals.set(name, shut_up_borrow_checker) {
                         // true means key wasn't in table
-                        table_delete(&mut self.globals, name);
+                        self.globals.delete(name);
                         runtime_error!(
                             self,
                             "Undefined variable '{}'.",
@@ -463,8 +469,7 @@ impl VM {
                     let instance = as_instance(self.peek(0));
                     let name = read_string!();
 
-                    let mut value = NIL_VAL;
-                    if table_get(&mut (*instance).fields, name, &mut value) {
+                    if let Some(value) = (*instance).fields.get(name) {
                         self.pop();
                         self.push(value);
                     } else if !self.bind_method((*instance).class, name) {
@@ -478,7 +483,7 @@ impl VM {
                     }
 
                     let instance = as_instance(self.peek(1));
-                    table_set(&mut (*instance).fields, read_string!(), self.peek(0));
+                    (*instance).fields.set(read_string!(), self.peek(0));
                     let value = self.pop();
                     self.pop();
                     self.push(value);
@@ -626,9 +631,8 @@ impl VM {
                         return InterpretResult::RuntimeError;
                     }
                     let subclass = as_class(self.peek(0));
-                    table_add_all(
-                        &mut (*as_class(superclass)).methods,
-                        &mut (*subclass).methods,
+                    (*subclass).methods.add_all(
+                        &mut (*as_class(superclass)).methods
                     );
                     self.pop();
                 }
@@ -663,7 +667,7 @@ impl VM {
 impl Drop for VM {
     fn drop(&mut self) {
         unsafe {
-            free_table(&mut self.globals);
+            self.globals.free();
             self.init_string = ptr::null_mut();
             free_objects();
         }
