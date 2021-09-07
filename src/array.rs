@@ -111,7 +111,7 @@ impl<T> Index<Range<usize>> for Array<T> {
             return &[];
         }
         assert!(
-            index.end < self.count, 
+            index.end <= self.count, 
             "Invalid range! end too big (Range = {:?}, Count = {})", index, self.count
         );
         unsafe {
@@ -122,10 +122,11 @@ impl<T> Index<Range<usize>> for Array<T> {
 
 impl<T> From<&[T]> for Array<T> {
     fn from(f: &[T]) -> Self {
-        let array = Array::with_capacity(f.len());
+        let mut array = Array::with_capacity(f.len());
         unsafe {
             ptr::copy_nonoverlapping(f.as_ptr(), array.values, f.len());
         }
+        array.count = f.len();
         array
     }
 }

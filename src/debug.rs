@@ -10,8 +10,8 @@ use crate::{
 pub unsafe fn disassemble_chunk(chunk: *mut Chunk, name: &str) {
     println!("== {} ==", name);
     let chunk = &mut *chunk;
-    let mut offset = 0i32;
-    while offset < chunk.count {
+    let mut offset = 0;
+    while offset < chunk.code.count() {
         offset = disassemble_instruction(chunk, offset);
     }
 }
@@ -112,7 +112,7 @@ fn simple_instruction(name: &str, offset: usize) -> usize {
 
 unsafe fn constant_instruction(name: &str, chunk: *mut Chunk, offset: usize) -> usize {
     let chunk = &mut *chunk;
-    let constant = chunk.code[offset];
+    let constant = chunk.code[offset + 1];
     print!("{:-16} {:4} '", name, constant);
     print_value(chunk.constants[usize::from(constant)]);
     println!("'");
@@ -140,7 +140,7 @@ unsafe fn jump_instruction(name: &str, sign: i32, chunk: *mut Chunk, offset: usi
         "{:-16} {:4} -> {}",
         name,
         offset,
-        offset + 3 + (sign * i32::from(jump)) as usize
+        ((offset as i32 + 3) + (sign * i32::from(jump))) as usize
     );
     offset + 3
 }

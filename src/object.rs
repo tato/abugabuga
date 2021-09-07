@@ -220,7 +220,7 @@ pub unsafe fn new_list() -> *mut ObjList {
 pub unsafe fn new_closure(function: *mut ObjFunction) -> *mut ObjClosure {
 
     let mut upvalues = Array::with_capacity((*function).upvalue_count as usize);
-    for i in 0..(*function).upvalue_count {
+    for _i in 0..(*function).upvalue_count {
         upvalues.write(ptr::null_mut());
     }
 

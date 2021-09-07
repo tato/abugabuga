@@ -175,11 +175,11 @@ impl<'source> Parser<'source> {
         self.emit_byte((offset & 0xff) as u8);
     }
 
-    unsafe fn emit_jump(&self, instruction: u8) -> i32 {
+    unsafe fn emit_jump(&self, instruction: u8) -> usize {
         self.emit_byte(instruction);
         self.emit_byte(0xff);
         self.emit_byte(0xff);
-        (*self.current_chunk()).code.count() as i32 - 2
+        (*self.current_chunk()).code.count() - 2
     }
 
     unsafe fn emit_return(&self) {
@@ -205,15 +205,15 @@ impl<'source> Parser<'source> {
         self.emit_bytes(OpCode::Constant as u8, shut_up_borrow_checker);
     }
 
-    unsafe fn patch_jump(&mut self, offset: i32) {
-        let jump = (*self.current_chunk()).code.count() as i32 - offset - 2;
+    unsafe fn patch_jump(&mut self, offset: usize) {
+        let jump = (*self.current_chunk()).code.count() - offset - 2;
 
         if jump > u16::MAX.into() {
             self.error("Too much code to jump over.");
         }
 
-        (*self.current_chunk()).code[offset as usize] = ((jump >> 8) & 0xff) as u8;
-        (*self.current_chunk()).code[offset as usize] = (jump & 0xff) as u8;
+        (*self.current_chunk()).code[offset] = ((jump >> 8) & 0xff) as u8;
+        (*self.current_chunk()).code[offset + 1] = (jump & 0xff) as u8;
     }
 
     unsafe fn init_compiler(&mut self, compiler: *mut Compiler<'source>, ty: FunctionType) {
@@ -249,17 +249,14 @@ impl<'source> Parser<'source> {
 
         #[cfg(feature = "debug_print_code")]
         {
-            if !parser.had_error {
+            if !self.had_error {
                 let name = if (*function).name != ptr::null_mut() {
                     let name = &*(*function).name;
-                    str::from_utf8_unchecked(slice::from_raw_parts(
-                        name.chars,
-                        name.length as usize,
-                    ))
+                    str::from_utf8_unchecked(&name.chars[0..name.chars.count()])
                 } else {
                     "<script>"
                 };
-                disassemble_chunk(current_chunk(), name);
+                disassemble_chunk(self.current_chunk(), name);
             }
         }
 
