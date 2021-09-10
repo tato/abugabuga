@@ -1,11 +1,13 @@
-use std::{ops::{Index, IndexMut, Range, RangeFull}, ptr, slice};
+use std::{
+    ops::{Index, IndexMut, Range, RangeFull},
+    ptr, slice,
+};
 
 use crate::{
-    memory::{mark_object, mark_value},
+    memory::{self, mark_object, mark_value},
     object::{Obj, ObjString},
     value::{bool_val, is_nil, Value, NIL_VAL},
 };
-
 
 fn grow_capacity(capacity: usize) -> usize {
     if capacity < 8 {
@@ -15,26 +17,22 @@ fn grow_capacity(capacity: usize) -> usize {
     }
 }
 
-macro_rules! grow_array {
-    ($t:ty, $pointer:expr, $old_count:expr, $new_count:expr) => {
-        crate::memory::reallocate(
-            $pointer as *mut std::ffi::c_void,
-            std::mem::size_of::<$t>() * $old_count as usize,
-            std::mem::size_of::<$t>() * $new_count as usize,
-            std::mem::align_of::<$t>(),
-        ) as *mut $t
-    };
+fn grow_array<T>(pointer: *mut T, old_count: usize, new_count: usize) -> *mut T {
+    memory::reallocate(
+        pointer as *mut std::ffi::c_void,
+        std::mem::size_of::<T>() * old_count,
+        std::mem::size_of::<T>() * new_count,
+        std::mem::align_of::<T>(),
+    ) as *mut T
 }
 
-macro_rules! free_array {
-    ($t:ty, $pointer:expr, $old_count:expr) => {
-        crate::memory::reallocate(
-            $pointer as *mut std::ffi::c_void,
-            std::mem::size_of::<$t>() * $old_count as usize,
-            0,
-            std::mem::align_of::<$t>(),
-        )
-    };
+fn free_array<T>(pointer: *mut T, old_count: usize) {
+    memory::reallocate(
+        pointer as *mut std::ffi::c_void,
+        std::mem::size_of::<T>() * old_count,
+        0,
+        std::mem::align_of::<T>(),
+    );
 }
 
 pub struct Array<T> {
@@ -56,7 +54,7 @@ impl<T> Array<T> {
         Array {
             capacity,
             count: 0,
-            values: grow_array!(T, ptr::null_mut(), 0, capacity),
+            values: grow_array(ptr::null_mut(), 0, capacity),
         }
     }
 
@@ -64,7 +62,7 @@ impl<T> Array<T> {
         if self.capacity < self.count + 1 {
             let old_capacity = self.capacity;
             self.capacity = grow_capacity(self.capacity);
-            self.values = grow_array!(T, self.values, old_capacity, self.capacity);
+            self.values = grow_array(self.values, old_capacity, self.capacity);
         }
         unsafe {
             *self.values.add(self.count) = value;
@@ -79,7 +77,7 @@ impl<T> Array<T> {
 
     // TODO: impl Drop
     pub fn free(&mut self) {
-        free_array!(T, self.values, self.capacity);
+        free_array(self.values, self.capacity);
     }
 }
 
@@ -87,19 +85,25 @@ impl<T> Index<usize> for Array<T> {
     type Output = T;
 
     fn index(&self, index: usize) -> &Self::Output {
-        assert!(index < self.count, "Index out of range! (Index = {}, Count = {})", index, self.count);
-        unsafe {
-            &*self.values.add(index)
-        }
+        assert!(
+            index < self.count,
+            "Index out of range! (Index = {}, Count = {})",
+            index,
+            self.count
+        );
+        unsafe { &*self.values.add(index) }
     }
 }
 
 impl<T> IndexMut<usize> for Array<T> {
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
-        assert!(index < self.count, "Index out of range! (Index = {}, Count = {})", index, self.count);
-        unsafe {
-            &mut *self.values.add(index)
-        }
+        assert!(
+            index < self.count,
+            "Index out of range! (Index = {}, Count = {})",
+            index,
+            self.count
+        );
+        unsafe { &mut *self.values.add(index) }
     }
 }
 
@@ -111,12 +115,12 @@ impl<T> Index<Range<usize>> for Array<T> {
             return &[];
         }
         assert!(
-            index.end <= self.count, 
-            "Invalid range! end too big (Range = {:?}, Count = {})", index, self.count
+            index.end <= self.count,
+            "Invalid range! end too big (Range = {:?}, Count = {})",
+            index,
+            self.count
         );
-        unsafe {
-            slice::from_raw_parts(self.values.add(index.start), index.end - index.start)
-        }
+        unsafe { slice::from_raw_parts(self.values.add(index.start), index.end - index.start) }
     }
 }
 
@@ -139,15 +143,6 @@ impl<T> From<&[T]> for Array<T> {
     }
 }
 
-
-
-
-
-
-
-
-
-
 const TABLE_MAX_LOAD: f32 = 0.75;
 
 pub struct Table {
@@ -157,7 +152,7 @@ pub struct Table {
 }
 
 pub struct Entry {
-    key: *mut ObjString,
+    key: *mut Obj<ObjString>,
     value: Value,
 }
 
@@ -170,21 +165,20 @@ impl Table {
         }
     }
 
-    pub fn get(&mut self, key: *mut ObjString) -> Option<Value> {
+    pub fn get(&mut self, key: *mut Obj<ObjString>) -> Option<Value> {
         if self.count == 0 {
             return None;
         }
-    
+
         let entry = unsafe { &mut *find_entry(self.entries, self.capacity, key) };
         if entry.key == ptr::null_mut() {
             return None;
         }
-    
+
         Some(entry.value)
     }
 
-    pub fn set(&mut self, key: *mut ObjString, value: Value) -> bool {
-
+    pub fn set(&mut self, key: *mut Obj<ObjString>, value: Value) -> bool {
         if self.count as f32 + 1.0 > self.capacity as f32 * TABLE_MAX_LOAD {
             let capacity = grow_capacity(self.capacity);
             unsafe { adjust_capacity(self, capacity) };
@@ -201,8 +195,7 @@ impl Table {
         is_new_key
     }
 
-    pub fn delete(&mut self, key: *mut ObjString) -> bool {
-
+    pub fn delete(&mut self, key: *mut Obj<ObjString>) -> bool {
         if self.count == 0 {
             return false;
         }
@@ -227,12 +220,12 @@ impl Table {
             }
         }
     }
-    
-    pub fn find_string(&mut self, chars: &[u8], hash: u32) -> *mut ObjString {
+
+    pub fn find_string(&mut self, chars: &[u8], hash: u32) -> *mut Obj<ObjString> {
         if self.count == 0 {
             return ptr::null_mut();
         }
-    
+
         let mut index = hash & ((self.capacity - 1) as u32);
         loop {
             let entry = unsafe { &mut *self.entries.offset(index as isize) };
@@ -242,34 +235,34 @@ impl Table {
                 }
             } else {
                 let key = unsafe { &mut *entry.key };
-                if key.chars.count() == chars.len()
-                    && key.hash == hash
-                    && &key.chars[0..key.chars.count()] == chars
+                if key.value.chars.count() == chars.len()
+                    && key.value.hash == hash
+                    && &key.value.chars[0..key.value.chars.count()] == chars
                 {
                     return key;
                 }
             }
-    
+
             index = (index + 1) & ((self.capacity - 1) as u32);
         }
     }
-    
+
     pub fn remove_white(&mut self) {
         for i in 0..self.capacity {
             unsafe {
                 let entry = self.entries.offset(i as isize);
-                if (*entry).key != ptr::null_mut() && !(*(*entry).key).obj.is_marked {
+                if (*entry).key != ptr::null_mut() && !(*(*entry).key).is_marked {
                     self.delete((*entry).key);
                 }
             }
         }
     }
-    
+
     pub fn mark_table(&mut self) {
         for i in 0..self.capacity {
             unsafe {
                 let entry = self.entries.offset(i as isize);
-                mark_object((*entry).key as *mut Obj);
+                mark_object((*entry).key as *mut Obj<()>);
                 mark_value((*entry).value);
             }
         }
@@ -277,14 +270,14 @@ impl Table {
 
     // TODO: impl Drop
     pub fn free(&mut self) {
-        free_array!(Entry, self.entries, self.capacity);
+        free_array(self.entries, self.capacity);
     }
 }
 
-fn find_entry(entries: *mut Entry, capacity: usize, key: *mut ObjString) -> *mut Entry {
+fn find_entry(entries: *mut Entry, capacity: usize, key: *mut Obj<ObjString>) -> *mut Entry {
     let key = unsafe { &mut *key };
 
-    let mut index = key.hash & ((capacity - 1) as u32);
+    let mut index = key.value.hash & ((capacity - 1) as u32);
     let mut tombstone = ptr::null_mut();
 
     loop {
@@ -312,7 +305,7 @@ fn find_entry(entries: *mut Entry, capacity: usize, key: *mut ObjString) -> *mut
 }
 
 unsafe fn adjust_capacity(table: *mut Table, capacity: usize) {
-    let entries = allocate!(Entry, capacity);
+    let entries: *mut Entry = memory::allocate(capacity);
     for i in 0..capacity {
         let e = &mut *entries.offset(i as isize);
         e.key = ptr::null_mut();
@@ -334,7 +327,7 @@ unsafe fn adjust_capacity(table: *mut Table, capacity: usize) {
         table.count += 1;
     }
 
-    free_array!(Entry, table.entries, table.capacity);
+    free_array(table.entries, table.capacity);
     table.entries = entries;
     table.capacity = capacity;
 }

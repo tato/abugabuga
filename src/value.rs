@@ -1,5 +1,3 @@
-
-
 use crate::object::print_object;
 
 #[cfg(not(feature = "nan_boxing"))]
@@ -19,7 +17,7 @@ mod value_inner {
     pub union ValueValue {
         pub boolean: bool,
         pub number: f64,
-        pub obj: *mut Obj,
+        pub obj: *mut Obj<()>,
     }
 
     #[derive(Clone, Copy)]
@@ -52,7 +50,7 @@ mod value_inner {
         unsafe { value.val.number }
     }
 
-    pub fn as_obj(value: Value) -> *mut Obj {
+    pub fn as_obj(value: Value) -> *mut Obj<()> {
         unsafe { value.val.obj }
     }
 
@@ -75,7 +73,7 @@ mod value_inner {
         }
     }
 
-    pub fn obj_val(value: *mut Obj) -> Value {
+    pub fn obj_val(value: *mut Obj<()>) -> Value {
         Value {
             ty: ValueType::Obj,
             val: ValueValue { obj: value },
@@ -123,7 +121,7 @@ mod value_inner {
         value.0 == TRUE_VAL.0
     }
 
-    pub fn as_obj(value: Value) -> *mut Obj {
+    pub fn as_obj(value: Value) -> *mut Obj<()> {
         unsafe { mem::transmute(value.0 & !(SIGN_BIT | QNAN)) }
     }
 
@@ -144,7 +142,7 @@ mod value_inner {
         }
     }
 
-    pub fn obj_val(obj: *mut Obj) -> Value {
+    pub fn obj_val(obj: *mut Obj<()>) -> Value {
         Value(SIGN_BIT | QNAN | unsafe { mem::transmute::<*mut Obj, u64>(obj) })
     }
 
@@ -158,7 +156,6 @@ mod value_inner {
 }
 
 pub use value_inner::*;
-
 
 #[cfg(not(feature = "nan_boxing"))]
 pub unsafe fn print_value(value: Value) {

@@ -1,9 +1,11 @@
-
-
-use crate::{array::Array, memory::{
+use crate::{
+    array::Array,
+    memory::{
         gc_track_constant_for_chunk_or_strings_table,
         gc_untrack_constant_for_chunk_or_strings_table,
-    }, value::{Value}};
+    },
+    value::Value,
+};
 
 pub enum OpCode {
     Constant,

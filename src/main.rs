@@ -6,6 +6,7 @@ pub const UINT8_COUNT: usize = u8::MAX as usize + 1;
 
 #[macro_use]
 mod memory;
+mod array;
 mod chunk;
 mod compiler;
 #[cfg(any(feature = "debug_trace_execution", feature = "debug_print_code"))]
@@ -14,7 +15,6 @@ mod object;
 mod scanner;
 mod value;
 mod vm;
-mod array;
 
 #[cfg(test)]
 mod test;

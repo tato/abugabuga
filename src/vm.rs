@@ -3,15 +3,22 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use crate::{chunk::OpCode, compiler::compile, memory::free_objects, object::{
+use crate::{
+    array::{Array, Table},
+    chunk::OpCode,
+    compiler::compile,
+    memory::free_objects,
+    object::{
         as_bound_method, as_class, as_closure, as_function, as_instance, as_list, as_native,
         as_string, copy_string, is_class, is_instance, is_list, is_string, new_bound_method,
         new_class, new_closure, new_instance, new_list, new_native, new_upvalue, obj_type,
         take_string, NativeFn, Obj, ObjClass, ObjClosure, ObjString, ObjType, ObjUpvalue,
-    }, array::{Array, Table}, value::{
+    },
+    value::{
         as_bool, as_number, bool_val, is_bool, is_nil, is_number, is_obj, number_val, obj_val,
         print_value, values_equal, Value, NIL_VAL,
-    }};
+    },
+};
 
 #[cfg(feature = "debug_trace_execution")]
 use crate::debug::disassemble_instruction;
@@ -21,7 +28,7 @@ pub const STACK_MAX: usize = FRAMES_MAX * u8::MAX as usize;
 
 #[derive(Clone, Copy)]
 pub struct CallFrame {
-    pub closure: *mut ObjClosure,
+    pub closure: *mut Obj<ObjClosure>,
     pub ip: usize,
     pub slots: *mut Value,
 }
@@ -32,8 +39,8 @@ pub struct VM {
     pub stack: [Value; STACK_MAX],
     pub stack_top: *mut Value,
     pub globals: Table,
-    pub init_string: *mut ObjString,
-    pub open_upvalues: *mut ObjUpvalue,
+    pub init_string: *mut Obj<ObjString>,
+    pub open_upvalues: *mut Obj<ObjUpvalue>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,17 +74,14 @@ unsafe fn sqrt_native(arg_count: i32, args: *mut Value) -> Value {
 unsafe fn _runtime_error(vm: &mut VM) {
     for i in (0..vm.frame_count).rev() {
         let frame = &mut vm.frames[i as usize];
-        let function = (*frame.closure).function;
+        let function = (*frame.closure).value.function;
         let instruction = frame.ip - 1;
-        eprint!("[line {}] in ", (*function).chunk.lines[instruction]);
-        if (*function).name == ptr::null_mut() {
+        eprint!("[line {}] in ", (*function).value.chunk.lines[instruction]);
+        if (*function).value.name == ptr::null_mut() {
             eprintln!("script");
         } else {
-            let name = &*(*function).name;
-            eprintln!(
-                "{}()",
-                std::str::from_utf8_unchecked(&name.chars[..])
-            );
+            let name = &*(*function).value.name;
+            eprintln!("{}()", std::str::from_utf8_unchecked(&name.value.chars[..]));
         }
     }
 }
@@ -123,8 +127,8 @@ impl VM {
     }
 
     unsafe fn define_native(&mut self, name: &str, function: NativeFn) {
-        self.push(obj_val(copy_string(name.as_bytes()) as *mut Obj));
-        self.push(obj_val(new_native(function) as *mut Obj));
+        self.push(obj_val(copy_string(name.as_bytes()) as *mut Obj<()>));
+        self.push(obj_val(new_native(function) as *mut Obj<()>));
         self.globals.set(as_string(self.stack[0]), self.stack[1]);
         self.pop();
         self.pop();
@@ -144,12 +148,12 @@ impl VM {
         *self.stack_top.offset(-1 - distance)
     }
 
-    unsafe fn call(&mut self, closure: *mut ObjClosure, arg_count: i32) -> bool {
-        if arg_count != (*(*closure).function).arity {
+    unsafe fn call(&mut self, closure: *mut Obj<ObjClosure>, arg_count: i32) -> bool {
+        if arg_count != (*(*closure).value.function).value.arity {
             runtime_error!(
                 self,
                 "Expected {} arguments but got {}.",
-                (*(*closure).function).arity,
+                (*(*closure).value.function).value.arity,
                 arg_count
             );
             return false;
@@ -173,14 +177,14 @@ impl VM {
             match obj_type(callee) {
                 ObjType::BoundMethod => {
                     let bound = as_bound_method(callee);
-                    *self.stack_top.offset(-arg_count as isize - 1) = (*bound).receiver;
-                    return self.call((*bound).method, arg_count);
+                    *self.stack_top.offset(-arg_count as isize - 1) = (*bound).value.receiver;
+                    return self.call((*bound).value.method, arg_count);
                 }
                 ObjType::Class => {
                     let class = as_class(callee);
                     *self.stack_top.offset(-arg_count as isize - 1) =
-                        obj_val(new_instance(class) as *mut Obj);
-                    if let Some(initializer) = (*class).methods.get(self.init_string) {
+                        obj_val(new_instance(class) as *mut Obj<()>);
+                    if let Some(initializer) = (*class).value.methods.get(self.init_string) {
                         return self.call(as_closure(initializer), arg_count);
                     } else if arg_count != 0 {
                         runtime_error!(self, "Expected 0 arguments but got {}.", arg_count);
@@ -205,11 +209,11 @@ impl VM {
 
     unsafe fn invoke_from_class(
         &mut self,
-        class: *mut ObjClass,
-        name: *mut ObjString,
+        class: *mut Obj<ObjClass>,
+        name: *mut Obj<ObjString>,
         arg_count: i32,
     ) -> bool {
-        let method = (*class).methods.get(name);
+        let method = (*class).value.methods.get(name);
         match method {
             Some(method) => self.call(as_closure(method), arg_count),
             None => {
@@ -217,10 +221,9 @@ impl VM {
                 false
             }
         }
-        
     }
 
-    unsafe fn invoke(&mut self, name: *mut ObjString, arg_count: i32) -> bool {
+    unsafe fn invoke(&mut self, name: *mut Obj<ObjString>, arg_count: i32) -> bool {
         let receiver = self.peek(arg_count as isize);
 
         if !is_instance(receiver) {
@@ -230,66 +233,66 @@ impl VM {
 
         let instance = as_instance(receiver);
 
-        if let Some(value) = (*instance).fields.get(name) {
+        if let Some(value) = (*instance).value.fields.get(name) {
             *self.stack_top.offset(-arg_count as isize - 1) = value;
             return self.call_value(value, arg_count);
         }
 
-        self.invoke_from_class((*instance).class, name, arg_count)
+        self.invoke_from_class((*instance).value.class, name, arg_count)
     }
 
-    unsafe fn bind_method(&mut self, class: *mut ObjClass, name: *mut ObjString) -> bool {
-
-        let method = match (*class).methods.get(name) {
+    unsafe fn bind_method(&mut self, class: *mut Obj<ObjClass>, name: *mut Obj<ObjString>) -> bool {
+        let method = match (*class).value.methods.get(name) {
             None => {
                 runtime_error!(self, "Undefined property '{}'.", "name->chars");
                 return false;
             }
-            Some(method) => method
+            Some(method) => method,
         };
 
         let bound = new_bound_method(self.peek(0), as_closure(method));
         self.pop();
-        self.push(obj_val(bound as *mut Obj));
+        self.push(obj_val(bound as *mut Obj<()>));
         true
     }
 
-    unsafe fn capture_upvalue(&mut self, local: *mut Value) -> *mut ObjUpvalue {
+    unsafe fn capture_upvalue(&mut self, local: *mut Value) -> *mut Obj<ObjUpvalue> {
         let mut prev_upvalue = ptr::null_mut();
         let mut upvalue = self.open_upvalues;
-        while upvalue != ptr::null_mut() && (*upvalue).location > local {
+        while upvalue != ptr::null_mut() && (*upvalue).value.location > local {
             prev_upvalue = upvalue;
-            upvalue = (*upvalue).next;
+            upvalue = (*upvalue).value.next;
         }
-        if upvalue != ptr::null_mut() && (*upvalue).location == local {
+        if upvalue != ptr::null_mut() && (*upvalue).value.location == local {
             return upvalue;
         }
 
         let created_upvalue = new_upvalue(local);
-        (*created_upvalue).next = upvalue;
+        (*created_upvalue).next = upvalue as *mut Obj<()>;
 
         if prev_upvalue == ptr::null_mut() {
             self.open_upvalues = created_upvalue;
         } else {
-            (*prev_upvalue).next = created_upvalue;
+            (*prev_upvalue).next = created_upvalue as *mut Obj<()>;
         }
 
         return created_upvalue;
     }
 
     unsafe fn close_upvalues(&mut self, last: *mut Value) {
-        while self.open_upvalues != ptr::null_mut() && (*self.open_upvalues).location >= last {
+        while self.open_upvalues != ptr::null_mut() && (*self.open_upvalues).value.location >= last
+        {
             let upvalue = self.open_upvalues;
-            (*upvalue).closed = *(*upvalue).location;
-            (*upvalue).location = &mut (*upvalue).closed;
-            self.open_upvalues = (*upvalue).next;
+            (*upvalue).value.closed = *(*upvalue).value.location;
+            (*upvalue).value.location = &mut (*upvalue).value.closed;
+            self.open_upvalues = (*upvalue).value.next;
         }
     }
 
-    unsafe fn define_method(&mut self, name: *mut ObjString) {
+    unsafe fn define_method(&mut self, name: *mut Obj<ObjString>) {
         let method = self.peek(0);
         let class = as_class(self.peek(1));
-        (*class).methods.set(name, method);
+        (*class).value.methods.set(name, method);
         self.pop();
     }
 
@@ -298,8 +301,8 @@ impl VM {
         let a = &*as_string(self.peek(1));
 
         // TODO TODO: Unnecessary extra allocation in "to_owned"
-        let mut concatenated = a.chars[..].to_owned();
-        concatenated.extend(&b.chars[..]);
+        let mut concatenated = a.value.chars[..].to_owned();
+        concatenated.extend(&b.value.chars[..]);
 
         let array = Array::from(concatenated.as_slice());
 
@@ -321,7 +324,7 @@ impl VM {
 
         macro_rules! read_byte {
             () => {{
-                let v = (*(*(*frame).closure).function).chunk.code[(*frame).ip];
+                let v = (*(*(*frame).closure).value.function).value.chunk.code[(*frame).ip];
                 (*frame).ip += 1;
                 v
             }};
@@ -329,16 +332,15 @@ impl VM {
         macro_rules! read_short {
             () => {{
                 (*frame).ip += 2;
-                let up = (*(*(*frame).closure).function).chunk.code[(*frame).ip - 2];
-                let down = (*(*(*frame).closure).function).chunk.code[(*frame).ip - 1];
+                let up = (*(*(*frame).closure).value.function).value.chunk.code[(*frame).ip - 2];
+                let down = (*(*(*frame).closure).value.function).value.chunk.code[(*frame).ip - 1];
                 (up as u16) << 8 | down as u16
             }};
         }
         macro_rules! read_constant {
             () => {
-                (*(*(*frame).closure).function)
-                    .chunk
-                    .constants[usize::from(read_byte!())]
+                (*(*(*frame).closure).value.function).value.chunk.constants
+                    [usize::from(read_byte!())]
             };
         }
         macro_rules! read_string {
@@ -372,11 +374,7 @@ impl VM {
                     slot = slot.add(1);
                 }
                 println!("");
-                disassemble_instruction(
-                    &mut (*(*(*frame).closure).function).chunk,
-                    (*frame)
-                        .ip,
-                );
+                disassemble_instruction(&mut (*(*(*frame).closure).function).chunk, (*frame).ip);
             }
 
             let instruction = read_byte!();
@@ -401,8 +399,8 @@ impl VM {
                         self.pop();
                     }
                     let list = new_list();
-                    (*list).items = items;
-                    self.push(obj_val(list as *mut Obj));
+                    (*list).value.items = items;
+                    self.push(obj_val(list as *mut Obj<()>));
                 }
                 i if i == OpCode::Pop as u8 => {
                     self.pop();
@@ -422,13 +420,13 @@ impl VM {
                             runtime_error!(
                                 self,
                                 "Undefined variable '{}'.",
-                                std::str::from_utf8_unchecked(&(*name).chars[..])
+                                std::str::from_utf8_unchecked(&(*name).value.chars[..])
                             );
                             return InterpretResult::RuntimeError;
                         }
                         Some(value) => value,
                     };
-                    
+
                     self.push(value);
                 }
                 i if i == OpCode::DefineGlobal as u8 => {
@@ -439,7 +437,7 @@ impl VM {
                 }
                 i if i == OpCode::SetGlobal as u8 => {
                     let name = read_string!();
-                    
+
                     let shut_up_borrow_checker = self.peek(0);
                     if self.globals.set(name, shut_up_borrow_checker) {
                         // true means key wasn't in table
@@ -447,18 +445,26 @@ impl VM {
                         runtime_error!(
                             self,
                             "Undefined variable '{}'.",
-                            std::str::from_utf8_unchecked(&(*name).chars[0..(*name).chars.count()])
+                            std::str::from_utf8_unchecked(
+                                &(*name).value.chars[0..(*name).value.chars.count()]
+                            )
                         );
                         return InterpretResult::RuntimeError;
                     }
                 }
                 i if i == OpCode::GetUpvalue as u8 => {
                     let slot = read_byte!();
-                    self.push(*(*(*(*frame).closure).upvalues[usize::from(slot)]).location);
+                    self.push(
+                        *(*(*(*frame).closure).value.upvalues[usize::from(slot)])
+                            .value
+                            .location,
+                    );
                 }
                 i if i == OpCode::SetUpvalue as u8 => {
                     let slot = read_byte!();
-                    *(*(*(*frame).closure).upvalues[usize::from(slot)]).location = self.peek(0);
+                    *(*(*(*frame).closure).value.upvalues[usize::from(slot)])
+                        .value
+                        .location = self.peek(0);
                 }
                 i if i == OpCode::GetProperty as u8 => {
                     if !is_instance(self.peek(0)) {
@@ -469,10 +475,10 @@ impl VM {
                     let instance = as_instance(self.peek(0));
                     let name = read_string!();
 
-                    if let Some(value) = (*instance).fields.get(name) {
+                    if let Some(value) = (*instance).value.fields.get(name) {
                         self.pop();
                         self.push(value);
-                    } else if !self.bind_method((*instance).class, name) {
+                    } else if !self.bind_method((*instance).value.class, name) {
                         return InterpretResult::RuntimeError;
                     }
                 }
@@ -483,7 +489,7 @@ impl VM {
                     }
 
                     let instance = as_instance(self.peek(1));
-                    (*instance).fields.set(read_string!(), self.peek(0));
+                    (*instance).value.fields.set(read_string!(), self.peek(0));
                     let value = self.pop();
                     self.pop();
                     self.push(value);
@@ -510,7 +516,7 @@ impl VM {
                     let index = as_number(self.pop());
                     let list = as_list(self.pop());
 
-                    let val = (*list).items[index as usize];
+                    let val = (*list).value.items[index as usize];
                     self.push(val);
                 }
                 i if i == OpCode::Equal as u8 => {
@@ -593,15 +599,16 @@ impl VM {
                 i if i == OpCode::Closure as u8 => {
                     let function = as_function(read_constant!());
                     let closure = new_closure(function);
-                    self.push(obj_val(closure as *mut Obj));
-                    for i in 0..(*closure).upvalues.count() {
+                    self.push(obj_val(closure as *mut Obj<()>));
+                    for i in 0..(*closure).value.upvalues.count() {
                         let is_local = read_byte!();
                         let index = read_byte!();
                         if is_local == 1 {
-                            (*closure).upvalues[i] =
+                            (*closure).value.upvalues[i] =
                                 self.capture_upvalue((*frame).slots.offset(index as isize));
                         } else {
-                            (*closure).upvalues[i] = (*(*frame).closure).upvalues[usize::from(index)];
+                            (*closure).value.upvalues[i] =
+                                (*(*frame).closure).value.upvalues[usize::from(index)];
                         }
                     }
                 }
@@ -622,7 +629,7 @@ impl VM {
                     frame = &mut self.frames[self.frame_count as usize - 1];
                 }
                 i if i == OpCode::Class as u8 => {
-                    self.push(obj_val(new_class(read_string!()) as *mut Obj));
+                    self.push(obj_val(new_class(read_string!()) as *mut Obj<()>));
                 }
                 i if i == OpCode::Inherit as u8 => {
                     let superclass = self.peek(1);
@@ -631,9 +638,10 @@ impl VM {
                         return InterpretResult::RuntimeError;
                     }
                     let subclass = as_class(self.peek(0));
-                    (*subclass).methods.add_all(
-                        &mut (*as_class(superclass)).methods
-                    );
+                    (*subclass)
+                        .value
+                        .methods
+                        .add_all(&mut (*as_class(superclass)).value.methods);
                     self.pop();
                 }
                 i if i == OpCode::Method as u8 => {
@@ -652,10 +660,10 @@ impl VM {
             return InterpretResult::CompileError;
         }
 
-        self.push(obj_val(function as *mut Obj));
+        self.push(obj_val(function as *mut Obj<()>));
         let closure = new_closure(function);
         self.pop();
-        self.push(obj_val(closure as *mut Obj));
+        self.push(obj_val(closure as *mut Obj<()>));
         self.call(closure, 0);
 
         let result = self.run();

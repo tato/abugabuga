@@ -35,16 +35,19 @@ fn test_main() {
             .output()
             .unwrap();
 
+        let stdout_text = std::str::from_utf8(&output.stdout).unwrap();
+        let stderr_text = std::str::from_utf8(&output.stderr).unwrap();
         assert!(
             output.status.success(),
-            "test '{}' didn't exit with success.",
-            *file
+            "test '{}' didn't exit with success.\nstdout: {}\nstderr: {}",
+            *file,
+            stdout_text,
+            stderr_text
         );
-        let output_text = std::str::from_utf8(&output.stdout).unwrap();
         assert_eq!(
-            *expected_output, output_text,
+            *expected_output, stdout_text,
             "output for test '{}' ({})\ndidn't match expected output ({})",
-            *file, output_text, *expected_output
+            *file, stdout_text, *expected_output
         );
     }
 }
