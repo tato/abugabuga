@@ -1,35 +1,8 @@
-use std::{mem, ptr::{self, NonNull}, str};
-
-use crate::{
-    array::{Array, Table},
-    chunk::{init_chunk, Chunk},
-    memory::{
-        gc_find_interned, gc_intern_string, gc_track_constant_for_chunk_or_strings_table,
-        gc_track_object, gc_untrack_constant_for_chunk_or_strings_table, reallocate,
-    },
-    value::{as_obj_header, is_obj, obj_val, print_value, Value, NIL_VAL},
+use std::{
+    str,
 };
 
-// TODO: this goes in gc.rs
-unsafe fn allocate_object<T>(ty: ObjType) -> Ref<T> {
-    let size = mem::size_of::<RefStorage<T>>();
-    let align = mem::align_of::<RefStorage<T>>();
-
-    let object = reallocate(ptr::null_mut(), 0, size, align) as *mut RefStorage<T>;
-    assert!(object != ptr::null_mut(), "Probably unnecesary sanity check.");
-
-    let header = &mut (*object).header;
-    header.ty = ty;
-    header.is_marked = false;
-    header.next = gc_track_object(header);
-
-    #[cfg(feature = "debug_log_gc")]
-    {
-        println!("{:?} allocate {} for {:?}", object, size, ty);
-    }
-
-    Ref{ inner: mem::transmute(object) }
-}
+use crate::{array::{Array, Table}, chunk::{init_chunk, Chunk}, memory::{ObjType, Ref, allocate_object, gc_find_interned, gc_intern_string, gc_track_constant_for_chunk_or_strings_table, gc_untrack_constant_for_chunk_or_strings_table}, value::{as_erased_ref, is_obj, obj_val, print_value, Value, NIL_VAL}};
 
 unsafe fn allocate_string(chars: Array<u8>, hash: u32) -> Ref<ObjString> {
     let mut string = allocate_object::<ObjString>(ObjType::String);
@@ -51,7 +24,7 @@ unsafe fn hash_string(key: &[u8]) -> u32 {
 }
 
 pub unsafe fn obj_type(value: Value) -> ObjType {
-    (*as_obj_header(value)).ty
+    as_erased_ref(value).ty()
 }
 
 pub unsafe fn _is_function(value: Value) -> bool {
@@ -87,116 +60,42 @@ pub unsafe fn is_list(value: Value) -> bool {
 }
 
 pub unsafe fn as_function(value: Value) -> Ref<ObjFunction> {
-    Ref::from_header(as_obj_header(value))
+    as_erased_ref(value).force_into()
 }
 
 pub unsafe fn as_native(value: Value) -> NativeFn {
-    let rf: Ref<ObjNative> = Ref::from_header(as_obj_header(value));
+    let rf: Ref<ObjNative> = as_erased_ref(value).force_into();
     rf.value().function
 }
 
 pub unsafe fn as_string(value: Value) -> Ref<ObjString> {
-    Ref::from_header(as_obj_header(value))
+    as_erased_ref(value).force_into()
 }
 
 pub unsafe fn as_closure(value: Value) -> Ref<ObjClosure> {
-    Ref::from_header(as_obj_header(value))
+    as_erased_ref(value).force_into()
 }
 
 pub unsafe fn as_class(value: Value) -> Ref<ObjClass> {
-    Ref::from_header(as_obj_header(value))
+    as_erased_ref(value).force_into()
 }
 
 pub unsafe fn as_instance(value: Value) -> Ref<ObjInstance> {
-    Ref::from_header(as_obj_header(value))
+    as_erased_ref(value).force_into()
 }
 
 pub unsafe fn as_bound_method(value: Value) -> Ref<ObjBoundMethod> {
-    Ref::from_header(as_obj_header(value))
+    as_erased_ref(value).force_into()
 }
 
 pub unsafe fn as_list(value: Value) -> Ref<ObjList> {
-    Ref::from_header(as_obj_header(value))
+    as_erased_ref(value).force_into()
 }
 
 unsafe fn is_obj_type(value: Value, ty: ObjType) -> bool {
-    is_obj(value) && (*as_obj_header(value)).ty == ty
+    is_obj(value) && as_erased_ref(value).ty() == ty
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ObjType {
-    BoundMethod,
-    Class,
-    Closure,
-    Function,
-    Instance,
-    List,
-    Native,
-    String,
-    Upvalue,
-}
-
-#[repr(C)]
-pub struct Ref<T> {
-    inner: ptr::NonNull<RefStorage<T>>
-}
-
-impl<T> std::clone::Clone for Ref<T> {
-    fn clone(&self) -> Self {
-        Self { inner: self.inner.clone() }
-    }
-}
-impl<T> std::marker::Copy for Ref<T> {}
-
-
-impl<T> Ref<T> {
-    pub fn value(&self) -> &T {
-        unsafe {
-            &self.inner.as_ref().value
-        }
-    }
-
-    pub fn value_mut(&mut self) -> &mut T {
-        unsafe {
-            &mut self.inner.as_mut().value
-        }
-    }
-
-    pub fn header(&self) -> &GcHeader {
-        unsafe { &self.inner.as_ref().header }
-    }
-
-    pub fn header_mut(&mut self) -> &mut GcHeader {
-        // MOST DEFINITELY NOT THREAD SAFE
-        unsafe { &mut self.inner.as_mut().header }
-    }
-
-    // TODO: OBLITERATE
-    pub fn same_ptr<X>(&self, other: &Ref<X>) -> bool {
-        self.inner.as_ptr() as usize == other.inner.as_ptr() as usize
-    }
-
-    pub unsafe fn from_header(header: *mut GcHeader) -> Ref<T> {
-        Ref { inner: mem::transmute(header) }
-    }
-
-    pub const fn dangling() -> Ref<T> {
-        Ref { inner: NonNull::dangling() }
-    }
-}
-
-#[repr(C)]
-pub struct RefStorage<T> {
-    header: GcHeader,
-    value: T,
-}
-
-#[repr(C)]
-pub struct GcHeader {
-    pub ty: ObjType,
-    pub is_marked: bool,
-    pub next: *mut GcHeader,
-}
 
 #[repr(C)]
 pub struct ObjFunction {
@@ -304,10 +203,7 @@ pub unsafe fn new_instance(class: Ref<ObjClass>) -> Ref<ObjInstance> {
     instance
 }
 
-pub unsafe fn new_bound_method(
-    receiver: Value,
-    method: Ref<ObjClosure>,
-) -> Ref<ObjBoundMethod> {
+pub unsafe fn new_bound_method(receiver: Value, method: Ref<ObjClosure>) -> Ref<ObjBoundMethod> {
     let mut bound = allocate_object::<ObjBoundMethod>(ObjType::BoundMethod);
     bound.value_mut().receiver = receiver;
     bound.value_mut().method = method;
@@ -343,7 +239,6 @@ pub unsafe fn new_upvalue(slot: *mut Value) -> Ref<ObjUpvalue> {
 }
 
 unsafe fn print_function(function: Ref<ObjFunction>) {
-
     match function.value().name {
         None => print!("<script>"),
         Some(name) => {
@@ -372,7 +267,10 @@ pub unsafe fn print_object(value: Value) {
         }
         ObjType::Function => print_function(as_function(value)),
         ObjType::Native => print!("<native fn>"),
-        ObjType::String => print!("{}", str::from_utf8_unchecked(&as_string(value).value().chars[..])),
+        ObjType::String => print!(
+            "{}",
+            str::from_utf8_unchecked(&as_string(value).value().chars[..])
+        ),
         ObjType::Upvalue => print!("upvalue"),
         ObjType::Closure => print_function(as_closure(value).value().function),
         ObjType::BoundMethod => {

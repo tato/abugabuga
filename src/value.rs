@@ -2,8 +2,9 @@ use crate::object::print_object;
 
 #[cfg(not(feature = "nan_boxing"))]
 mod value_inner {
-    use crate::object::{GcHeader, Ref};
+    use crate::memory::{Ref};
 
+    
     #[repr(u8)]
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub enum ValueType {
@@ -17,7 +18,7 @@ mod value_inner {
     pub union ValueValue {
         pub boolean: bool,
         pub number: f64,
-        pub obj: *mut GcHeader,
+        pub obj: Ref<()>,
     }
 
     #[derive(Clone, Copy)]
@@ -50,7 +51,7 @@ mod value_inner {
         unsafe { value.val.number }
     }
 
-    pub fn as_obj_header(value: Value) -> *mut GcHeader {
+    pub fn as_erased_ref(value: Value) -> Ref<()> {
         unsafe { value.val.obj }
     }
 
@@ -73,10 +74,12 @@ mod value_inner {
         }
     }
 
-    pub fn obj_val<T>(mut value: Ref<T>) -> Value {
+    pub fn obj_val<T>(value: Ref<T>) -> Value {
         Value {
             ty: ValueType::Obj,
-            val: ValueValue { obj: value.header_mut() },
+            val: ValueValue {
+                obj: value.type_erased(),
+            },
         }
     }
 }
@@ -187,7 +190,7 @@ pub unsafe fn values_equal(a: Value, b: Value) -> bool {
         ValueType::Bool => as_bool(a) == as_bool(b),
         ValueType::Nil => true,
         ValueType::Number => as_number(a) == as_number(b),
-        ValueType::Obj => as_obj_header(a) == as_obj_header(b),
+        ValueType::Obj => as_erased_ref(a).same_ptr(&as_erased_ref(b)),
     }
 }
 

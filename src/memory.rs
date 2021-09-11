@@ -1,6 +1,15 @@
-use std::{alloc, ffi::c_void, ptr, vec};
+use std::{alloc, ffi::c_void, mem, ptr::{self, NonNull}, vec};
 
-use crate::{array::{Array, Table}, chunk::free_chunk, compiler::{Parser}, object::{GcHeader, ObjBoundMethod, ObjClass, ObjClosure, ObjFunction, ObjInstance, ObjList, ObjNative, ObjString, ObjType, ObjUpvalue, Ref}, value::{as_obj_header, is_obj, Value, NIL_VAL}, vm::VM};
+use crate::{
+    array::{Array, Table},
+    chunk::free_chunk,
+    compiler::Parser,
+    object::{ ObjBoundMethod, ObjClass, ObjClosure, ObjFunction, ObjInstance, ObjList,
+        ObjNative, ObjString, ObjUpvalue, 
+    },
+    value::{as_erased_ref, is_obj, Value, NIL_VAL},
+    vm::VM,
+};
 
 #[cfg(feature = "debug_log_gc")]
 use crate::value::{obj_val, print_value};
@@ -17,17 +26,146 @@ pub fn allocate<T>(count: usize) -> *mut T {
 fn free<T>(mut rf: Ref<T>) {
     reallocate(
         rf.header_mut() as *mut GcHeader as *mut std::ffi::c_void,
-        std::mem::size_of::<(GcHeader, T)>(), // TODO: #[repr(C)?]
+        std::mem::size_of::<RefStorage<T>>(),
         0,
-        std::mem::align_of::<(GcHeader, T)>(),
+        std::mem::align_of::<RefStorage<T>>(),
     );
+}
+
+// TODO: WHERE AND HOW SHOULD THE POSSIBLE TYPES BE DEFINED?
+// ALL THE ObjX STRUCTS ARE DEFINED IN object.rs, IT DOESN'T MAKE SENSE
+// THAT THIS ENUM IS DEFINED HERE.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ObjType {
+    BoundMethod,
+    Class,
+    Closure,
+    Function,
+    Instance,
+    List,
+    Native,
+    String,
+    Upvalue,
+}
+
+#[repr(C)]
+pub struct Ref<T> {
+    inner: ptr::NonNull<RefStorage<T>>,
+}
+
+// TODO: IS CLONE/COPY SOUND FOR THIS TYPE?
+// STUFF LIKE AN Rc DOESN'T HAVE COPY BECAUSE THEY NEED
+// TO INCREASE THE REFERENCE COUNT AND STUFF... HERE IT'S JUST A POINTER
+// BUT I THINK WITH THREADS, IMPLEMENTING Copy MIGHT ALLOW SHARING WITHOUT
+// LIMITS AND THAT COULD BE FUCKY.
+impl<T> std::clone::Clone for Ref<T> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+        }
+    }
+}
+impl<T> std::marker::Copy for Ref<T> {}
+
+impl<T> Ref<T> {
+    pub fn value(&self) -> &T {
+        unsafe { &self.inner.as_ref().value }
+    }
+
+    pub fn value_mut(&mut self) -> &mut T {
+        unsafe { &mut self.inner.as_mut().value }
+    }
+
+    pub fn ty(&self) -> ObjType {
+        self.header().ty
+    }
+
+    pub fn type_erased(self) -> Ref<()> {
+        unsafe { mem::transmute(self) }
+    }
+
+    fn header(&self) -> &GcHeader {
+        unsafe { &self.inner.as_ref().header }
+    }
+
+    fn header_mut(&mut self) -> &mut GcHeader {
+        // MOST DEFINITELY NOT THREAD SAFE
+        unsafe { &mut self.inner.as_mut().header }
+    }
+
+    // TODO: OBLITERATE? I DON'T KNOW IF I WANT THIS BEHAVIOR ANYWHERE
+    pub fn same_ptr<X>(&self, other: &Ref<X>) -> bool {
+        self.inner.as_ptr() as usize == other.inner.as_ptr() as usize
+    }
+
+    unsafe fn from_header(header: *mut GcHeader) -> Ref<T> {
+        Ref {
+            inner: mem::transmute(header),
+        }
+    }
+
+    pub const fn dangling() -> Ref<T> {
+        Ref {
+            inner: NonNull::dangling(),
+        }
+    }
+}
+
+impl Ref<()> {
+    pub unsafe fn force_into<T>(self) -> Ref<T> {
+        mem::transmute(self)
+    }
+}
+
+#[repr(C)]
+struct RefStorage<T> {
+    header: GcHeader,
+    value: T,
+}
+
+#[repr(C)]
+struct GcHeader {
+    ty: ObjType,
+    is_marked: bool,
+    next: *mut GcHeader,
+}
+
+
+pub fn allocate_object<T>(ty: ObjType) -> Ref<T> {
+    let size = mem::size_of::<RefStorage<T>>();
+    let align = mem::align_of::<RefStorage<T>>();
+
+    let object = reallocate(ptr::null_mut(), 0, size, align) as *mut RefStorage<T>;
+    assert!(
+        object != ptr::null_mut(),
+        "Probably unnecesary sanity check."
+    );
+
+    unsafe {
+        let header = &mut (*object).header;
+        header.ty = ty;
+        header.is_marked = false;
+    
+        let current_head = GC.objects;
+        GC.objects = header;
+        header.next = current_head;
+    
+        #[cfg(feature = "debug_log_gc")]
+        {
+            println!("{:?} allocate {} for {:?}", object, size, ty);
+        }
+    
+        Ref {
+            inner: mem::transmute(object),
+        }
+    }
 }
 
 const GC_HEAP_GROW_FACTOR: usize = 2;
 
 // http://gchandbook.org/
 pub struct GarbageCollector {
-    pub vm: *mut VM,
+    vm: *mut VM,
     parser: *mut Parser<'static>,
     bytes_allocated: usize,
     next_gc: usize,
@@ -65,7 +203,6 @@ pub fn reallocate(
     gc.bytes_allocated += new_size;
 
     if new_size > old_size {
-
         if cfg!(feature = "debug_stress_gc") || gc.bytes_allocated > gc.next_gc {
             unsafe { collect_garbage() };
         }
@@ -113,6 +250,10 @@ pub fn reallocate(
     result as *mut c_void
 }
 
+pub unsafe fn gc_track_vm(vm: *mut VM) {
+    GC.vm = vm;
+}
+
 pub unsafe fn gc_track_constant_for_chunk_or_strings_table(value: Value) {
     let vm = &mut *GC.vm;
     vm.push(value);
@@ -121,12 +262,6 @@ pub unsafe fn gc_track_constant_for_chunk_or_strings_table(value: Value) {
 pub unsafe fn gc_untrack_constant_for_chunk_or_strings_table() {
     let vm = &mut *GC.vm;
     vm.pop();
-}
-
-pub unsafe fn gc_track_object(object: *mut GcHeader) -> *mut GcHeader {
-    let result = GC.objects;
-    GC.objects = object;
-    result
 }
 
 pub unsafe fn gc_intern_string(string: Ref<ObjString>) {
@@ -147,8 +282,7 @@ pub unsafe fn gc_untrack_parser(_parser: *mut Parser<'static>) {
 
 // TODO: ACTUALLY THIS FUNCTION IS DEFINITELY 'unsafe' BUT I
 // CAN'T BE BOTHERED TO CHANGE THAT IN THE MIDDLE OF A BIG REFACTOR
-pub fn mark_object(header: *mut GcHeader) {
-
+fn mark_header(header: *mut GcHeader) {
     if unsafe { (*header).is_marked } {
         return;
     }
@@ -168,14 +302,18 @@ pub fn mark_object(header: *mut GcHeader) {
     }
 }
 
+pub fn mark_object<T>(mut object: Ref<T>) {
+    mark_header(object.header_mut());
+}
+
 pub fn mark_value(value: Value) {
     if is_obj(value) {
-        mark_object(as_obj_header(value));
+        mark_object(as_erased_ref(value));
     }
 }
 
 fn mark_array(array: *mut Array<Value>) {
-    for i in 0..unsafe { (*array).count() } { 
+    for i in 0..unsafe { (*array).count() } {
         mark_value(unsafe { (*array)[i] });
     }
 }
@@ -197,38 +335,38 @@ unsafe fn blacken_object(header: *mut GcHeader) {
         }
         ObjType::Closure => {
             let mut closure: Ref<ObjClosure> = Ref::from_header(header);
-            mark_object(closure.value_mut().function.header_mut());
+            mark_object(closure.value_mut().function);
             for i in 0..closure.value().upvalues.count() {
-                if let Some(mut uv) = closure.value().upvalues[i] {
-                    mark_object(uv.header_mut());
+                if let Some(uv) = closure.value().upvalues[i] {
+                    mark_object(uv);
                 }
             }
         }
         ObjType::Function => {
             let mut function: Ref<ObjFunction> = Ref::from_header(header);
-            if let Some(mut name) = function.value().name {
-                mark_object(name.header_mut());
+            if let Some(name) = function.value().name {
+                mark_object(name);
             }
             mark_array(&mut function.value_mut().chunk.constants);
         }
         ObjType::Upvalue => {
             let upvalue: Ref<ObjUpvalue> = Ref::from_header(header);
             mark_value(upvalue.value().closed)
-        },
+        }
         ObjType::Class => {
             let mut class: Ref<ObjClass> = Ref::from_header(header);
-            mark_object(class.value_mut().name.header_mut());
+            mark_object(class.value_mut().name);
             class.value_mut().methods.mark_table();
         }
         ObjType::Instance => {
             let mut instance: Ref<ObjInstance> = Ref::from_header(header);
-            mark_object(instance.value_mut().class.header_mut());
+            mark_object(instance.value_mut().class);
             instance.value_mut().fields.mark_table();
         }
         ObjType::BoundMethod => {
             let mut bound: Ref<ObjBoundMethod> = Ref::from_header(header);
             mark_value(bound.value().receiver);
-            mark_object(bound.value_mut().method.header_mut());
+            mark_object(bound.value_mut().method);
         }
         ObjType::Native | ObjType::String => {}
     }
@@ -296,12 +434,12 @@ unsafe fn mark_roots() {
     }
 
     for i in 0..vm.frame_count {
-        mark_object(vm.frames[i as usize].closure.header_mut());
+        mark_object(vm.frames[i as usize].closure);
     }
 
     let mut upvalue = vm.open_upvalues;
-    while let Some(mut uv) = upvalue {
-        mark_object(uv.header_mut());
+    while let Some(uv) = upvalue {
+        mark_object(uv);
         upvalue = uv.value().next;
     }
 
@@ -309,7 +447,7 @@ unsafe fn mark_roots() {
     if GC.parser != ptr::null_mut() {
         (*GC.parser).mark_compiler_roots();
     }
-    mark_object(vm.init_string.header_mut());
+    mark_object(vm.init_string);
 }
 
 unsafe fn trace_references() {
@@ -340,6 +478,21 @@ unsafe fn sweep() {
     }
 }
 
+unsafe fn remove_white(table: &mut Table) {
+    let mut delet = vec![];
+    for entry in &table[..] {
+        match entry.key() {
+            Some(key) if !key.header().is_marked => {
+                delet.push(key);
+            }
+            _ => {}
+        }
+    }
+    for d in delet {
+        table.delete(d);
+    }
+}
+
 unsafe fn collect_garbage() {
     #[cfg(feature = "debug_log_gc")]
     {
@@ -350,7 +503,7 @@ unsafe fn collect_garbage() {
 
     mark_roots();
     trace_references();
-    GC.strings.remove_white();
+    remove_white(&mut GC.strings);
     sweep();
 
     GC.next_gc = GC.bytes_allocated * GC_HEAP_GROW_FACTOR;

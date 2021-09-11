@@ -1,10 +1,9 @@
-use std::{ops::{Index, IndexMut, Range, RangeFull}, ptr, slice};
-
-use crate::{
-    memory::{self, mark_object, mark_value},
-    object::{Ref, ObjString},
-    value::{bool_val, is_nil, Value, NIL_VAL},
+use std::{
+    ops::{Index, IndexMut, Range, RangeFull},
+    ptr, slice,
 };
+
+use crate::{memory::{self, Ref, mark_object, mark_value}, object::{ObjString,}, value::{bool_val, is_nil, Value, NIL_VAL}};
 
 fn grow_capacity(capacity: usize) -> usize {
     if capacity < 8 {
@@ -153,6 +152,12 @@ pub struct Entry {
     value: Value,
 }
 
+impl Entry {
+    pub fn key(&self) -> Option<Ref<ObjString>> {
+        self.key
+    }
+}
+
 impl Table {
     pub const fn new() -> Table {
         Table {
@@ -247,26 +252,12 @@ impl Table {
         }
     }
 
-    pub fn remove_white(&mut self) {
-        for i in 0..self.capacity {
-            unsafe {
-                let entry = self.entries.offset(i as isize);
-                match (*entry).key {
-                    Some(key) if !key.header().is_marked => {
-                        self.delete(key);
-                    }
-                    _ => {}
-                }
-            }
-        }
-    }
-
     pub fn mark_table(&mut self) {
         for i in 0..self.capacity {
             unsafe {
                 let entry = self.entries.offset(i as isize);
-                if let Some(mut key) = (*entry).key {
-                    mark_object(key.header_mut());
+                if let Some(key) = (*entry).key {
+                    mark_object(key);
                 }
                 mark_value((*entry).value);
             }
@@ -341,4 +332,30 @@ unsafe fn adjust_capacity(table: *mut Table, capacity: usize) {
     free_array(table.entries, table.capacity);
     table.entries = entries;
     table.capacity = capacity;
+}
+
+
+impl Index<Range<usize>> for Table {
+    type Output = [Entry];
+
+    fn index(&self, index: Range<usize>) -> &Self::Output {
+        if index.end <= index.start {
+            return &[];
+        }
+        assert!(
+            index.end <= self.count,
+            "Invalid range! end too big (Range = {:?}, Count = {})",
+            index,
+            self.count
+        );
+        unsafe { slice::from_raw_parts(self.entries.add(index.start), index.end - index.start) }
+    }
+}
+
+impl Index<RangeFull> for Table {
+    type Output = [Entry];
+
+    fn index(&self, _index: RangeFull) -> &Self::Output {
+        &self[0..self.count]
+    }
 }

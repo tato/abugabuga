@@ -3,22 +3,15 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use crate::{
-    array::{Array, Table},
-    chunk::OpCode,
-    compiler::compile,
-    memory::free_objects,
-    object::{
+use crate::{array::{Array, Table}, chunk::OpCode, compiler::compile, memory::{ObjType, Ref, free_objects}, object::{
         as_bound_method, as_class, as_closure, as_function, as_instance, as_list, as_native,
         as_string, copy_string, is_class, is_instance, is_list, is_string, new_bound_method,
         new_class, new_closure, new_instance, new_list, new_native, new_upvalue, obj_type,
-        take_string, NativeFn, Ref, ObjClass, ObjClosure, ObjString, ObjType, ObjUpvalue,
-    },
-    value::{
+        take_string, NativeFn, ObjClass, ObjClosure, ObjString, ObjUpvalue,
+    }, value::{
         as_bool, as_number, bool_val, is_bool, is_nil, is_number, is_obj, number_val, obj_val,
         print_value, values_equal, Value, NIL_VAL,
-    },
-};
+    }};
 
 #[cfg(feature = "debug_trace_execution")]
 use crate::debug::disassemble_instruction;
@@ -80,7 +73,10 @@ unsafe fn _runtime_error(vm: &mut VM) {
         match function.value().name {
             None => eprintln!("script"),
             Some(name) => {
-                eprintln!("{}()", std::str::from_utf8_unchecked(&name.value().chars[..]))
+                eprintln!(
+                    "{}()",
+                    std::str::from_utf8_unchecked(&name.value().chars[..])
+                )
             }
         }
     }
@@ -182,8 +178,7 @@ impl VM {
                 }
                 ObjType::Class => {
                     let mut class = as_class(callee);
-                    *self.stack_top.offset(-arg_count as isize - 1) =
-                        obj_val(new_instance(class));
+                    *self.stack_top.offset(-arg_count as isize - 1) = obj_val(new_instance(class));
                     if let Some(initializer) = class.value_mut().methods.get(self.init_string) {
                         return self.call(as_closure(initializer), arg_count);
                     } else if arg_count != 0 {
@@ -280,8 +275,7 @@ impl VM {
     }
 
     unsafe fn close_upvalues(&mut self, last: *mut Value) {
-        while self.open_upvalues.is_some() && self.open_upvalues.unwrap().value().location >= last
-        {
+        while self.open_upvalues.is_some() && self.open_upvalues.unwrap().value().location >= last {
             let mut upvalue = self.open_upvalues.unwrap();
             upvalue.value_mut().closed = *upvalue.value().location;
             upvalue.value_mut().location = &mut upvalue.value_mut().closed;
@@ -339,8 +333,7 @@ impl VM {
         }
         macro_rules! read_constant {
             () => {
-                (*frame).closure.value().function.value().chunk.constants
-                    [usize::from(read_byte!())]
+                (*frame).closure.value().function.value().chunk.constants[usize::from(read_byte!())]
             };
         }
         macro_rules! read_string {
@@ -491,7 +484,10 @@ impl VM {
                     }
 
                     let mut instance = as_instance(self.peek(1));
-                    instance.value_mut().fields.set(read_string!(), self.peek(0));
+                    instance
+                        .value_mut()
+                        .fields
+                        .set(read_string!(), self.peek(0));
                     let value = self.pop();
                     self.pop();
                     self.push(value);

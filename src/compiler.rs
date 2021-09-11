@@ -1,13 +1,6 @@
 use std::{mem, ptr, str, u8};
 
-use crate::{
-    chunk::{add_constant, write_chunk, Chunk, OpCode},
-    memory::{gc_track_parser, gc_untrack_parser, mark_object},
-    object::{copy_string, new_function, Ref, ObjFunction},
-    scanner::{Scanner, Token, TokenType},
-    value::{number_val, obj_val, Value},
-    UINT8_COUNT,
-};
+use crate::{UINT8_COUNT, chunk::{add_constant, write_chunk, Chunk, OpCode}, memory::{Ref, gc_track_parser, gc_untrack_parser, mark_object}, object::{copy_string, new_function, ObjFunction}, scanner::{Scanner, Token, TokenType}, value::{number_val, obj_val, Value}};
 
 #[cfg(feature = "debug_print_code")]
 use crate::debug::disassemble_chunk;
@@ -224,12 +217,11 @@ impl<'source> Parser<'source> {
             scope_depth: 0,
             function: unsafe { new_function() },
             locals: unsafe { mem::zeroed() },
-            upvalues: unsafe { mem::zeroed() }, 
+            upvalues: unsafe { mem::zeroed() },
         }
     }
 
     unsafe fn init_compiler(&mut self, compiler: *mut Compiler<'source>) {
-               
         self.current_compiler = compiler;
 
         if (*compiler).ty != FunctionType::Script {
@@ -296,7 +288,7 @@ impl<'source> Parser<'source> {
     pub unsafe fn mark_compiler_roots(&mut self) {
         let mut compiler = self.current_compiler;
         while compiler != ptr::null_mut() {
-            mark_object((*compiler).function.header_mut());
+            mark_object((*compiler).function);
             compiler = (*compiler).enclosing;
         }
     }
@@ -786,7 +778,8 @@ pub unsafe fn compile(source: &str) -> Option<Ref<ObjFunction>> {
 
     gc_track_parser(mem::transmute(&mut parser));
 
-    let mut compiler: Compiler = parser.create_a_compiler_with_fields_and_stuff(FunctionType::Script);
+    let mut compiler: Compiler =
+        parser.create_a_compiler_with_fields_and_stuff(FunctionType::Script);
     parser.init_compiler(&mut compiler);
 
     parser.advance();
