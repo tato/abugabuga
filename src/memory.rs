@@ -1,16 +1,6 @@
 use std::{alloc, ffi::c_void, ptr, vec};
 
-use crate::{
-    array::{Array, Table},
-    chunk::free_chunk,
-    compiler::Parser,
-    object::{
-        Obj, ObjBoundMethod, ObjClass, ObjClosure, ObjFunction, ObjInstance, ObjList, ObjNative,
-        ObjString, ObjType, ObjUpvalue,
-    },
-    value::{as_obj, is_obj, Value, NIL_VAL},
-    vm::VM,
-};
+use crate::{array::{Array, Table}, chunk::free_chunk, compiler::{Parser}, object::{GcHeader, ObjBoundMethod, ObjClass, ObjClosure, ObjFunction, ObjInstance, ObjList, ObjNative, ObjString, ObjType, ObjUpvalue, Ref}, value::{as_obj_header, is_obj, Value, NIL_VAL}, vm::VM};
 
 #[cfg(feature = "debug_log_gc")]
 use crate::value::{obj_val, print_value};
@@ -24,12 +14,12 @@ pub fn allocate<T>(count: usize) -> *mut T {
     ) as *mut T
 }
 
-fn free<T>(pointer: *mut T) {
+fn free<T>(mut rf: Ref<T>) {
     reallocate(
-        pointer as *mut std::ffi::c_void,
-        std::mem::size_of::<T>(),
+        rf.header_mut() as *mut GcHeader as *mut std::ffi::c_void,
+        std::mem::size_of::<(GcHeader, T)>(), // TODO: #[repr(C)?]
         0,
-        std::mem::align_of::<T>(),
+        std::mem::align_of::<(GcHeader, T)>(),
     );
 }
 
@@ -42,8 +32,8 @@ pub struct GarbageCollector {
     bytes_allocated: usize,
     next_gc: usize,
     strings: Table,
-    objects: *mut Obj<()>,
-    gray_stack: Vec<*mut Obj<()>>,
+    objects: *mut GcHeader,
+    gray_stack: Vec<*mut GcHeader>,
 }
 pub static mut GC: GarbageCollector = GarbageCollector {
     vm: ptr::null_mut(),
@@ -133,17 +123,17 @@ pub unsafe fn gc_untrack_constant_for_chunk_or_strings_table() {
     vm.pop();
 }
 
-pub unsafe fn gc_track_object(object: *mut Obj<()>) -> *mut Obj<()> {
+pub unsafe fn gc_track_object(object: *mut GcHeader) -> *mut GcHeader {
     let result = GC.objects;
     GC.objects = object;
     result
 }
 
-pub unsafe fn gc_intern_string(string: *mut Obj<ObjString>) {
+pub unsafe fn gc_intern_string(string: Ref<ObjString>) {
     GC.strings.set(string, NIL_VAL);
 }
 
-pub unsafe fn gc_find_interned(chars: &[u8], hash: u32) -> *mut Obj<ObjString> {
+pub unsafe fn gc_find_interned(chars: &[u8], hash: u32) -> Option<Ref<ObjString>> {
     GC.strings.find_string(chars, hash)
 }
 
@@ -155,11 +145,11 @@ pub unsafe fn gc_untrack_parser(_parser: *mut Parser<'static>) {
     GC.parser = ptr::null_mut();
 }
 
-pub fn mark_object(object: *mut Obj<()>) {
-    if object == ptr::null_mut() {
-        return;
-    }
-    if unsafe { (*object).is_marked } {
+// TODO: ACTUALLY THIS FUNCTION IS DEFINITELY 'unsafe' BUT I
+// CAN'T BE BOTHERED TO CHANGE THAT IN THE MIDDLE OF A BIG REFACTOR
+pub fn mark_object(header: *mut GcHeader) {
+
+    if unsafe { (*header).is_marked } {
         return;
     }
 
@@ -173,27 +163,24 @@ pub fn mark_object(object: *mut Obj<()>) {
     }
 
     unsafe {
-        (*object).is_marked = true;
-    }
-
-    unsafe {
-        GC.gray_stack.push(object);
+        (*header).is_marked = true;
+        GC.gray_stack.push(header);
     }
 }
 
 pub fn mark_value(value: Value) {
     if is_obj(value) {
-        mark_object(as_obj(value));
+        mark_object(as_obj_header(value));
     }
 }
 
 fn mark_array(array: *mut Array<Value>) {
-    for i in 0..unsafe { (*array).count() } {
+    for i in 0..unsafe { (*array).count() } { 
         mark_value(unsafe { (*array)[i] });
     }
 }
 
-unsafe fn blacken_object(object: *mut Obj<()>) {
+unsafe fn blacken_object(header: *mut GcHeader) {
     #[cfg(feature = "debug_log_gc")]
     {
         print!("{:?} blacken ", object);
@@ -201,91 +188,101 @@ unsafe fn blacken_object(object: *mut Obj<()>) {
         println!();
     }
 
-    match (*object).ty {
+    match (*header).ty {
         ObjType::List => {
-            let list = object as *mut Obj<ObjList>;
-            for val in &(*list).value.items {
+            let list: Ref<ObjList> = Ref::from_header(header);
+            for val in &list.value().items {
                 mark_value(*val);
             }
         }
         ObjType::Closure => {
-            let closure = object as *mut Obj<ObjClosure>;
-            mark_object((*closure).value.function as *mut Obj<()>);
-            for i in 0..(*closure).value.upvalues.count() {
-                mark_object((*closure).value.upvalues[i] as *mut Obj<()>);
+            let mut closure: Ref<ObjClosure> = Ref::from_header(header);
+            mark_object(closure.value_mut().function.header_mut());
+            for i in 0..closure.value().upvalues.count() {
+                if let Some(mut uv) = closure.value().upvalues[i] {
+                    mark_object(uv.header_mut());
+                }
             }
         }
         ObjType::Function => {
-            let function = object as *mut Obj<ObjFunction>;
-            mark_object((*function).value.name as *mut Obj<()>);
-            mark_array(&mut (*function).value.chunk.constants);
+            let mut function: Ref<ObjFunction> = Ref::from_header(header);
+            if let Some(mut name) = function.value().name {
+                mark_object(name.header_mut());
+            }
+            mark_array(&mut function.value_mut().chunk.constants);
         }
-        ObjType::Upvalue => mark_value((*(object as *mut Obj<ObjUpvalue>)).value.closed),
+        ObjType::Upvalue => {
+            let upvalue: Ref<ObjUpvalue> = Ref::from_header(header);
+            mark_value(upvalue.value().closed)
+        },
         ObjType::Class => {
-            let class = object as *mut Obj<ObjClass>;
-            mark_object((*class).value.name as *mut Obj<()>);
-            (*class).value.methods.mark_table();
+            let mut class: Ref<ObjClass> = Ref::from_header(header);
+            mark_object(class.value_mut().name.header_mut());
+            class.value_mut().methods.mark_table();
         }
         ObjType::Instance => {
-            let instance = object as *mut Obj<ObjInstance>;
-            mark_object((*instance).value.class as *mut Obj<()>);
-            (*instance).value.fields.mark_table();
+            let mut instance: Ref<ObjInstance> = Ref::from_header(header);
+            mark_object(instance.value_mut().class.header_mut());
+            instance.value_mut().fields.mark_table();
         }
         ObjType::BoundMethod => {
-            let bound = object as *mut Obj<ObjBoundMethod>;
-            mark_value((*bound).value.receiver);
-            mark_object((*bound).value.method as *mut Obj<()>);
+            let mut bound: Ref<ObjBoundMethod> = Ref::from_header(header);
+            mark_value(bound.value().receiver);
+            mark_object(bound.value_mut().method.header_mut());
         }
         ObjType::Native | ObjType::String => {}
     }
 }
 
-unsafe fn free_object(object: *mut Obj<()>) {
+unsafe fn free_object(header: *mut GcHeader) {
     #[cfg(feature = "debug_log_gc")]
     {
         println!("{:?} free type {:?}", object, (*object).ty);
     }
 
-    match (*object).ty {
+    match (*header).ty {
         ObjType::List => {
-            let list = object as *mut Obj<ObjList>;
-            (*list).value.items.clear();
-            (*list).value.items.shrink_to_fit();
+            let mut list: Ref<ObjList> = Ref::from_header(header);
+            list.value_mut().items.clear();
+            list.value_mut().items.shrink_to_fit();
             free(list);
         }
         ObjType::Function => {
-            let function = object as *mut Obj<ObjFunction>;
-            free_chunk(&mut (*function).value.chunk);
+            let mut function: Ref<ObjFunction> = Ref::from_header(header);
+            free_chunk(&mut function.value_mut().chunk);
             free(function);
         }
         ObjType::Native => {
-            free(object as *mut Obj<ObjNative>);
+            let native: Ref<ObjNative> = Ref::from_header(header);
+            free(native);
         }
         ObjType::String => {
-            let string = object as *mut Obj<ObjString>;
-            (*string).value.chars.free();
+            let mut string: Ref<ObjString> = Ref::from_header(header);
+            string.value_mut().chars.free();
             free(string);
         }
         ObjType::Upvalue => {
-            free(object as *mut Obj<ObjUpvalue>);
+            let upvalue: Ref<ObjUpvalue> = Ref::from_header(header);
+            free(upvalue);
         }
         ObjType::Closure => {
-            let closure = object as *mut Obj<ObjClosure>;
-            (*closure).value.upvalues.free();
+            let mut closure: Ref<ObjClosure> = Ref::from_header(header);
+            closure.value_mut().upvalues.free();
             free(closure);
         }
         ObjType::Class => {
-            let class = object as *mut Obj<ObjClass>;
-            (*class).value.methods.free();
+            let mut class: Ref<ObjClass> = Ref::from_header(header);
+            class.value_mut().methods.free();
             free(class);
         }
         ObjType::Instance => {
-            let instance = object as *mut Obj<ObjInstance>;
-            (*instance).value.fields.free();
+            let mut instance: Ref<ObjInstance> = Ref::from_header(header);
+            instance.value_mut().fields.free();
             free(instance);
         }
         ObjType::BoundMethod => {
-            free(object as *mut Obj<ObjBoundMethod>);
+            let bound: Ref<ObjBoundMethod> = Ref::from_header(header);
+            free(bound);
         }
     }
 }
@@ -299,20 +296,20 @@ unsafe fn mark_roots() {
     }
 
     for i in 0..vm.frame_count {
-        mark_object(vm.frames[i as usize].closure as *mut Obj<()>);
+        mark_object(vm.frames[i as usize].closure.header_mut());
     }
 
     let mut upvalue = vm.open_upvalues;
-    while upvalue != ptr::null_mut() {
-        mark_object(upvalue as *mut Obj<()>);
-        upvalue = (*upvalue).value.next;
+    while let Some(mut uv) = upvalue {
+        mark_object(uv.header_mut());
+        upvalue = uv.value().next;
     }
 
     vm.globals.mark_table();
     if GC.parser != ptr::null_mut() {
         (*GC.parser).mark_compiler_roots();
     }
-    mark_object(vm.init_string as *mut Obj<()>);
+    mark_object(vm.init_string.header_mut());
 }
 
 unsafe fn trace_references() {

@@ -1,11 +1,8 @@
-use std::{
-    ops::{Index, IndexMut, Range, RangeFull},
-    ptr, slice,
-};
+use std::{ops::{Index, IndexMut, Range, RangeFull}, ptr, slice};
 
 use crate::{
     memory::{self, mark_object, mark_value},
-    object::{Obj, ObjString},
+    object::{Ref, ObjString},
     value::{bool_val, is_nil, Value, NIL_VAL},
 };
 
@@ -152,7 +149,7 @@ pub struct Table {
 }
 
 pub struct Entry {
-    key: *mut Obj<ObjString>,
+    key: Option<Ref<ObjString>>,
     value: Value,
 }
 
@@ -165,47 +162,47 @@ impl Table {
         }
     }
 
-    pub fn get(&mut self, key: *mut Obj<ObjString>) -> Option<Value> {
+    pub fn get(&mut self, key: Ref<ObjString>) -> Option<Value> {
         if self.count == 0 {
             return None;
         }
 
         let entry = unsafe { &mut *find_entry(self.entries, self.capacity, key) };
-        if entry.key == ptr::null_mut() {
+        if entry.key.is_none() {
             return None;
         }
 
         Some(entry.value)
     }
 
-    pub fn set(&mut self, key: *mut Obj<ObjString>, value: Value) -> bool {
+    pub fn set(&mut self, key: Ref<ObjString>, value: Value) -> bool {
         if self.count as f32 + 1.0 > self.capacity as f32 * TABLE_MAX_LOAD {
             let capacity = grow_capacity(self.capacity);
             unsafe { adjust_capacity(self, capacity) };
         }
 
         let entry = unsafe { &mut *find_entry(self.entries, self.capacity, key) };
-        let is_new_key = entry.key == ptr::null_mut();
+        let is_new_key = entry.key.is_none();
         if is_new_key && is_nil(entry.value) {
             self.count += 1;
         }
 
-        entry.key = key;
+        entry.key = Some(key);
         entry.value = value;
         is_new_key
     }
 
-    pub fn delete(&mut self, key: *mut Obj<ObjString>) -> bool {
+    pub fn delete(&mut self, key: Ref<ObjString>) -> bool {
         if self.count == 0 {
             return false;
         }
 
         let entry = unsafe { &mut *find_entry(self.entries, self.capacity, key) };
-        if entry.key == ptr::null_mut() {
+        if entry.key.is_none() {
             return false;
         }
 
-        entry.key = ptr::null_mut();
+        entry.key = None;
         entry.value = bool_val(true);
 
         true
@@ -215,31 +212,34 @@ impl Table {
         let from = unsafe { &*from };
         for i in 0..from.capacity {
             let entry = unsafe { &*from.entries.offset(i as isize) };
-            if entry.key != ptr::null_mut() {
-                self.set(entry.key, entry.value);
+            if let Some(key) = entry.key {
+                self.set(key, entry.value);
             }
         }
     }
 
-    pub fn find_string(&mut self, chars: &[u8], hash: u32) -> *mut Obj<ObjString> {
+    pub fn find_string(&mut self, chars: &[u8], hash: u32) -> Option<Ref<ObjString>> {
         if self.count == 0 {
-            return ptr::null_mut();
+            return None;
         }
 
         let mut index = hash & ((self.capacity - 1) as u32);
         loop {
             let entry = unsafe { &mut *self.entries.offset(index as isize) };
-            if entry.key == ptr::null_mut() {
-                if is_nil(entry.value) {
-                    return ptr::null_mut();
+            match entry.key {
+                None => {
+                    if is_nil(entry.value) {
+                        return None;
+                    }
                 }
-            } else {
-                let key = unsafe { &mut *entry.key };
-                if key.value.chars.count() == chars.len()
-                    && key.value.hash == hash
-                    && &key.value.chars[0..key.value.chars.count()] == chars
-                {
-                    return key;
+                Some(key_ref) => {
+                    let key: &ObjString = key_ref.value();
+                    if key.chars.count() == chars.len()
+                        && key.hash == hash
+                        && &key.chars[0..key.chars.count()] == chars
+                    {
+                        return Some(key_ref);
+                    }
                 }
             }
 
@@ -251,8 +251,11 @@ impl Table {
         for i in 0..self.capacity {
             unsafe {
                 let entry = self.entries.offset(i as isize);
-                if (*entry).key != ptr::null_mut() && !(*(*entry).key).is_marked {
-                    self.delete((*entry).key);
+                match (*entry).key {
+                    Some(key) if !key.header().is_marked => {
+                        self.delete(key);
+                    }
+                    _ => {}
                 }
             }
         }
@@ -262,7 +265,9 @@ impl Table {
         for i in 0..self.capacity {
             unsafe {
                 let entry = self.entries.offset(i as isize);
-                mark_object((*entry).key as *mut Obj<()>);
+                if let Some(mut key) = (*entry).key {
+                    mark_object(key.header_mut());
+                }
                 mark_value((*entry).value);
             }
         }
@@ -274,30 +279,35 @@ impl Table {
     }
 }
 
-fn find_entry(entries: *mut Entry, capacity: usize, key: *mut Obj<ObjString>) -> *mut Entry {
-    let key = unsafe { &mut *key };
+fn find_entry(entries: *mut Entry, capacity: usize, key_ref: Ref<ObjString>) -> *mut Entry {
+    let key = key_ref.value();
 
-    let mut index = key.value.hash & ((capacity - 1) as u32);
+    let mut index = key.hash & ((capacity - 1) as u32);
     let mut tombstone = ptr::null_mut();
 
     loop {
         let entry = unsafe { &mut *entries.add(index as usize) };
-        if entry.key == ptr::null_mut() {
-            if is_nil(entry.value) {
-                // empty entry
-                return if tombstone != ptr::null_mut() {
-                    tombstone
+        match entry.key {
+            None => {
+                if is_nil(entry.value) {
+                    // empty entry
+                    return if tombstone != ptr::null_mut() {
+                        tombstone
+                    } else {
+                        entry
+                    };
                 } else {
-                    entry
-                };
-            } else {
-                // we found a tombstone
-                if tombstone == ptr::null_mut() {
-                    tombstone = entry;
+                    // we found a tombstone
+                    if tombstone == ptr::null_mut() {
+                        tombstone = entry;
+                    }
                 }
             }
-        } else if entry.key == key {
-            return entry;
+            Some(entry_key) => {
+                if entry_key.same_ptr(&key_ref) {
+                    return entry;
+                }
+            }
         }
 
         index = (index + 1) & ((capacity - 1) as u32);
@@ -308,7 +318,7 @@ unsafe fn adjust_capacity(table: *mut Table, capacity: usize) {
     let entries: *mut Entry = memory::allocate(capacity);
     for i in 0..capacity {
         let e = &mut *entries.offset(i as isize);
-        e.key = ptr::null_mut();
+        e.key = None;
         e.value = NIL_VAL;
     }
 
@@ -317,14 +327,15 @@ unsafe fn adjust_capacity(table: *mut Table, capacity: usize) {
 
     for i in 0..table.capacity {
         let entry = &mut *table.entries.offset(i as isize);
-        if entry.key == ptr::null_mut() {
-            continue;
+        match entry.key {
+            None => continue,
+            Some(key) => {
+                let dest = &mut *find_entry(entries, capacity, key);
+                dest.key = entry.key;
+                dest.value = entry.value;
+                table.count += 1;
+            }
         }
-
-        let dest = &mut *find_entry(entries, capacity, entry.key);
-        dest.key = entry.key;
-        dest.value = entry.value;
-        table.count += 1;
     }
 
     free_array(table.entries, table.capacity);

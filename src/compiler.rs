@@ -3,7 +3,7 @@ use std::{mem, ptr, str, u8};
 use crate::{
     chunk::{add_constant, write_chunk, Chunk, OpCode},
     memory::{gc_track_parser, gc_untrack_parser, mark_object},
-    object::{copy_string, new_function, Obj, ObjFunction},
+    object::{copy_string, new_function, Ref, ObjFunction},
     scanner::{Scanner, Token, TokenType},
     value::{number_val, obj_val, Value},
     UINT8_COUNT,
@@ -68,11 +68,11 @@ pub enum FunctionType {
     Script,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy)]
 pub struct Compiler<'source> {
     pub enclosing: *mut Compiler<'source>,
 
-    pub function: *mut Obj<ObjFunction>,
+    pub function: Ref<ObjFunction>,
     pub ty: FunctionType,
 
     pub locals: [Local<'source>; UINT8_COUNT],
@@ -88,7 +88,7 @@ pub struct ClassCompiler {
 
 impl<'source> Parser<'source> {
     unsafe fn current_chunk(&self) -> *mut Chunk {
-        &mut (*(*self.current_compiler).function).value.chunk
+        &mut (*self.current_compiler).function.value_mut().chunk
     }
 
     unsafe fn error_at(&mut self, token: *mut Token, message: &str) {
@@ -216,19 +216,25 @@ impl<'source> Parser<'source> {
         (*self.current_chunk()).code[offset + 1] = (jump & 0xff) as u8;
     }
 
-    unsafe fn init_compiler(&mut self, compiler: *mut Compiler<'source>, ty: FunctionType) {
-        let compiler = &mut *compiler;
-        compiler.enclosing = self.current_compiler;
-        compiler.function = ptr::null_mut();
-        compiler.ty = ty;
-        compiler.local_count = 0;
-        compiler.scope_depth = 0;
-        compiler.function = new_function();
+    fn create_a_compiler_with_fields_and_stuff(&self, ty: FunctionType) -> Compiler<'source> {
+        Compiler {
+            enclosing: self.current_compiler,
+            ty,
+            local_count: 0,
+            scope_depth: 0,
+            function: unsafe { new_function() },
+            locals: unsafe { mem::zeroed() },
+            upvalues: unsafe { mem::zeroed() }, 
+        }
+    }
+
+    unsafe fn init_compiler(&mut self, compiler: *mut Compiler<'source>) {
+               
         self.current_compiler = compiler;
 
-        if ty != FunctionType::Script {
-            (*(*self.current_compiler).function).value.name =
-                copy_string(self.previous.lexeme.as_bytes());
+        if (*compiler).ty != FunctionType::Script {
+            (*self.current_compiler).function.value_mut().name =
+                Some(copy_string(self.previous.lexeme.as_bytes()));
         }
 
         let local =
@@ -236,14 +242,14 @@ impl<'source> Parser<'source> {
         (*self.current_compiler).local_count += 1;
         local.depth = 0;
         local.is_captured = false;
-        if ty != FunctionType::Function {
+        if (*compiler).ty != FunctionType::Function {
             local.name.lexeme = "this";
         } else {
             local.name.lexeme = "";
         }
     }
 
-    unsafe fn end_compiler(&mut self) -> *mut Obj<ObjFunction> {
+    unsafe fn end_compiler(&mut self) -> Ref<ObjFunction> {
         self.emit_return();
         let function = (*self.current_compiler).function;
 
@@ -290,7 +296,7 @@ impl<'source> Parser<'source> {
     pub unsafe fn mark_compiler_roots(&mut self) {
         let mut compiler = self.current_compiler;
         while compiler != ptr::null_mut() {
-            mark_object((*compiler).function as *mut Obj<()>);
+            mark_object((*compiler).function.header_mut());
             compiler = (*compiler).enclosing;
         }
     }
@@ -318,7 +324,7 @@ impl<'source> Parser<'source> {
     }
 
     unsafe fn identifier_constant(&mut self, name: &Token) -> u8 {
-        self.make_constant(obj_val(copy_string(name.lexeme.as_bytes()) as *mut Obj<()>))
+        self.make_constant(obj_val(copy_string(name.lexeme.as_bytes())))
     }
 
     unsafe fn resolve_local(&mut self, compiler: *mut Compiler, name: &Token) -> i32 {
@@ -335,7 +341,7 @@ impl<'source> Parser<'source> {
     }
 
     unsafe fn add_upvalue(&mut self, compiler: *mut Compiler, index: u8, is_local: bool) -> i32 {
-        let upvalue_count = (*(*compiler).function).value.upvalue_count;
+        let upvalue_count = (*compiler).function.value().upvalue_count;
 
         for i in 0..upvalue_count {
             let upvalue = &(*compiler).upvalues[i as usize];
@@ -351,8 +357,8 @@ impl<'source> Parser<'source> {
 
         (*compiler).upvalues[upvalue_count as usize].is_local = is_local;
         (*compiler).upvalues[upvalue_count as usize].index = index;
-        let res = (*(*compiler).function).value.upvalue_count;
-        (*(*compiler).function).value.upvalue_count += 1;
+        let res = (*compiler).function.value().upvalue_count;
+        (*compiler).function.value_mut().upvalue_count += 1;
         res
     }
 
@@ -466,15 +472,15 @@ impl<'source> Parser<'source> {
     }
 
     unsafe fn function(&mut self, ty: FunctionType) {
-        let mut compiler: Compiler = mem::zeroed();
-        self.init_compiler(&mut compiler, ty);
+        let mut compiler = self.create_a_compiler_with_fields_and_stuff(ty);
+        self.init_compiler(&mut compiler);
         self.begin_scope();
 
         self.consume(TokenType::LeftParen, "Expect '(' after function name.");
         if !self.check(TokenType::RightParen) {
             loop {
-                (*(*self.current_compiler).function).value.arity += 1;
-                if (*(*self.current_compiler).function).value.arity > 255 {
+                (*self.current_compiler).function.value_mut().arity += 1;
+                if (*self.current_compiler).function.value().arity > 255 {
                     self.error_at_current("Can't have more than 255 parameters.");
                 }
                 let constant = self.parse_variable("Expect parameter name");
@@ -490,10 +496,10 @@ impl<'source> Parser<'source> {
         self.block();
 
         let function = self.end_compiler();
-        let shut_up_borrow_checker = self.make_constant(obj_val(function as *mut Obj<()>));
+        let shut_up_borrow_checker = self.make_constant(obj_val(function));
         self.emit_bytes(OpCode::Closure as u8, shut_up_borrow_checker);
 
-        for i in 0..(*function).value.upvalue_count {
+        for i in 0..function.value().upvalue_count {
             self.emit_byte(if compiler.upvalues[i as usize].is_local {
                 1
             } else {
@@ -759,7 +765,7 @@ impl<'source> Parser<'source> {
     }
 }
 
-pub unsafe fn compile(source: &str) -> *mut Obj<ObjFunction> {
+pub unsafe fn compile(source: &str) -> Option<Ref<ObjFunction>> {
     let mut scanner = Scanner::new(source);
 
     let nul_token = Token {
@@ -780,8 +786,8 @@ pub unsafe fn compile(source: &str) -> *mut Obj<ObjFunction> {
 
     gc_track_parser(mem::transmute(&mut parser));
 
-    let mut compiler: Compiler = mem::zeroed();
-    parser.init_compiler(&mut compiler, FunctionType::Script);
+    let mut compiler: Compiler = parser.create_a_compiler_with_fields_and_stuff(FunctionType::Script);
+    parser.init_compiler(&mut compiler);
 
     parser.advance();
 
@@ -791,9 +797,9 @@ pub unsafe fn compile(source: &str) -> *mut Obj<ObjFunction> {
 
     let function = parser.end_compiler();
     let result = if parser.had_error {
-        ptr::null_mut()
+        None
     } else {
-        function
+        Some(function)
     };
 
     gc_untrack_parser(mem::transmute(&mut parser));
@@ -880,7 +886,7 @@ unsafe fn or(parser: &mut Parser, _can_assign: bool) {
 unsafe fn string(parser: &mut Parser, _can_assign: bool) {
     let lexeme_len = parser.previous.lexeme.len();
     let contents_slice = &parser.previous.lexeme.as_bytes()[1..lexeme_len - 1];
-    parser.emit_constant(obj_val(copy_string(contents_slice) as *mut Obj<()>));
+    parser.emit_constant(obj_val(copy_string(contents_slice)));
 }
 
 unsafe fn list(parser: &mut Parser, _can_assign: bool) {

@@ -2,7 +2,7 @@ use crate::object::print_object;
 
 #[cfg(not(feature = "nan_boxing"))]
 mod value_inner {
-    use crate::object::Obj;
+    use crate::object::{GcHeader, Ref};
 
     #[repr(u8)]
     #[derive(Clone, Copy, PartialEq, Eq)]
@@ -17,7 +17,7 @@ mod value_inner {
     pub union ValueValue {
         pub boolean: bool,
         pub number: f64,
-        pub obj: *mut Obj<()>,
+        pub obj: *mut GcHeader,
     }
 
     #[derive(Clone, Copy)]
@@ -50,7 +50,7 @@ mod value_inner {
         unsafe { value.val.number }
     }
 
-    pub fn as_obj(value: Value) -> *mut Obj<()> {
+    pub fn as_obj_header(value: Value) -> *mut GcHeader {
         unsafe { value.val.obj }
     }
 
@@ -73,10 +73,10 @@ mod value_inner {
         }
     }
 
-    pub fn obj_val(value: *mut Obj<()>) -> Value {
+    pub fn obj_val<T>(mut value: Ref<T>) -> Value {
         Value {
             ty: ValueType::Obj,
-            val: ValueValue { obj: value },
+            val: ValueValue { obj: value.header_mut() },
         }
     }
 }
@@ -85,7 +85,7 @@ mod value_inner {
 mod value_inner {
     use std::mem;
 
-    use crate::object::Obj;
+    use crate::object::Ref;
 
     const SIGN_BIT: u64 = 0x8000000000000000;
     const QNAN: u64 = 0x7ffc000000000000;
@@ -121,7 +121,7 @@ mod value_inner {
         value.0 == TRUE_VAL.0
     }
 
-    pub fn as_obj(value: Value) -> *mut Obj<()> {
+    pub fn as_obj(value: Value) -> *mut Ref<()> {
         unsafe { mem::transmute(value.0 & !(SIGN_BIT | QNAN)) }
     }
 
@@ -142,8 +142,8 @@ mod value_inner {
         }
     }
 
-    pub fn obj_val(obj: *mut Obj<()>) -> Value {
-        Value(SIGN_BIT | QNAN | unsafe { mem::transmute::<*mut Obj, u64>(obj) })
+    pub fn obj_val(obj: *mut Ref<()>) -> Value {
+        Value(SIGN_BIT | QNAN | unsafe { mem::transmute::<*mut Ref, u64>(obj) })
     }
 
     fn num_to_value(num: f64) -> Value {
@@ -187,7 +187,7 @@ pub unsafe fn values_equal(a: Value, b: Value) -> bool {
         ValueType::Bool => as_bool(a) == as_bool(b),
         ValueType::Nil => true,
         ValueType::Number => as_number(a) == as_number(b),
-        ValueType::Obj => as_obj(a) == as_obj(b),
+        ValueType::Obj => as_obj_header(a) == as_obj_header(b),
     }
 }
 
