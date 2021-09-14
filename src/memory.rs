@@ -1,13 +1,20 @@
-use std::{alloc, ffi::c_void, mem, ptr::{self, NonNull}, vec};
+use std::{
+    alloc,
+    ffi::c_void,
+    mem,
+    ptr::{self, NonNull},
+    vec,
+};
 
 use crate::{
     array::{Array, Table},
     chunk::free_chunk,
     compiler::Parser,
-    object::{ ObjBoundMethod, ObjClass, ObjClosure, ObjFunction, ObjInstance, ObjList,
-        ObjNative, ObjString, ObjUpvalue, 
+    object::{
+        ObjBoundMethod, ObjClass, ObjClosure, ObjFunction, ObjInstance, ObjList, ObjNative,
+        ObjString, ObjUpvalue,
     },
-    value::{as_erased_ref, is_obj, Value, NIL_VAL},
+    value::Value,
     vm::VM,
 };
 
@@ -80,7 +87,7 @@ impl<T> Ref<T> {
         self.header().ty
     }
 
-    pub fn type_erased(self) -> Ref<()> {
+    pub fn with_type_erased(self) -> Ref<()> {
         unsafe { mem::transmute(self) }
     }
 
@@ -94,7 +101,7 @@ impl<T> Ref<T> {
     }
 
     // TODO: OBLITERATE? I DON'T KNOW IF I WANT THIS BEHAVIOR ANYWHERE
-    pub fn same_ptr<X>(&self, other: &Ref<X>) -> bool {
+    pub fn has_same_ptr_as<X>(&self, other: &Ref<X>) -> bool {
         self.inner.as_ptr() as usize == other.inner.as_ptr() as usize
     }
 
@@ -130,7 +137,6 @@ struct GcHeader {
     next: *mut GcHeader,
 }
 
-
 pub fn allocate_object<T>(ty: ObjType) -> Ref<T> {
     let size = mem::size_of::<RefStorage<T>>();
     let align = mem::align_of::<RefStorage<T>>();
@@ -145,16 +151,16 @@ pub fn allocate_object<T>(ty: ObjType) -> Ref<T> {
         let header = &mut (*object).header;
         header.ty = ty;
         header.is_marked = false;
-    
+
         let current_head = GC.objects;
         GC.objects = header;
         header.next = current_head;
-    
+
         #[cfg(feature = "debug_log_gc")]
         {
             println!("{:?} allocate {} for {:?}", object, size, ty);
         }
-    
+
         Ref {
             inner: mem::transmute(object),
         }
@@ -265,7 +271,7 @@ pub unsafe fn gc_untrack_constant_for_chunk_or_strings_table() {
 }
 
 pub unsafe fn gc_intern_string(string: Ref<ObjString>) {
-    GC.strings.set(string, NIL_VAL);
+    GC.strings.set(string, Value::Nil);
 }
 
 pub unsafe fn gc_find_interned(chars: &[u8], hash: u32) -> Option<Ref<ObjString>> {
@@ -307,8 +313,8 @@ pub fn mark_object<T>(mut object: Ref<T>) {
 }
 
 pub fn mark_value(value: Value) {
-    if is_obj(value) {
-        mark_object(as_erased_ref(value));
+    if let Some(r) = value.as_erased_ref() {
+        mark_object(r);
     }
 }
 

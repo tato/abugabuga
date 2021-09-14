@@ -3,15 +3,19 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use crate::{array::{Array, Table}, chunk::OpCode, compiler::compile, memory::{ObjType, Ref, free_objects}, object::{
+use crate::{
+    array::{Array, Table},
+    chunk::OpCode,
+    compiler::compile,
+    memory::{free_objects, ObjType, Ref},
+    object::{
         as_bound_method, as_class, as_closure, as_function, as_instance, as_list, as_native,
         as_string, copy_string, is_class, is_instance, is_list, is_string, new_bound_method,
-        new_class, new_closure, new_instance, new_list, new_native, new_upvalue, obj_type,
-        take_string, NativeFn, ObjClass, ObjClosure, ObjString, ObjUpvalue,
-    }, value::{
-        as_bool, as_number, bool_val, is_bool, is_nil, is_number, is_obj, number_val, obj_val,
-        print_value, values_equal, Value, NIL_VAL,
-    }};
+        new_class, new_closure, new_instance, new_list, new_native, new_upvalue, take_string,
+        NativeFn, ObjClass, ObjClosure, ObjString, ObjUpvalue,
+    },
+    value::Value,
+};
 
 #[cfg(feature = "debug_trace_execution")]
 use crate::debug::disassemble_instruction;
@@ -54,14 +58,14 @@ unsafe fn clock_native(_arg_count: i32, _args: *mut Value) -> Value {
         .duration_since(UNIX_EPOCH)
         .unwrap_or(Duration::from_secs(0))
         .as_secs_f64();
-    return number_val(clock);
+    return clock.into();
 }
 
 unsafe fn sqrt_native(arg_count: i32, args: *mut Value) -> Value {
-    if arg_count != 1 && !is_number(*args) {
+    if arg_count != 1 || (*args).as_number().is_none() {
         panic!("sqrt() only takes 1 numeric argument.");
     }
-    return number_val(as_number(*args).sqrt());
+    return (*args).as_number().unwrap().sqrt().into();
 }
 
 unsafe fn _runtime_error(vm: &mut VM) {
@@ -94,7 +98,7 @@ impl VM {
         let vm: VM = VM {
             frames: [ZERO_CALL_FRAME; FRAMES_MAX],
             frame_count: 0,
-            stack: [NIL_VAL; STACK_MAX],
+            stack: [Value::NIL; STACK_MAX],
             stack_top: ptr::null_mut(),
             globals: Table::new(),
             init_string: Ref::dangling(),
@@ -123,8 +127,8 @@ impl VM {
     }
 
     unsafe fn define_native(&mut self, name: &str, function: NativeFn) {
-        self.push(obj_val(copy_string(name.as_bytes())));
-        self.push(obj_val(new_native(function)));
+        self.push(copy_string(name.as_bytes()).into());
+        self.push(new_native(function).into());
         self.globals.set(as_string(self.stack[0]), self.stack[1]);
         self.pop();
         self.pop();
@@ -169,8 +173,8 @@ impl VM {
     }
 
     unsafe fn call_value(&mut self, callee: Value, arg_count: i32) -> bool {
-        if is_obj(callee) {
-            match obj_type(callee) {
+        if let Some(c) = callee.as_erased_ref() {
+            match c.ty() {
                 ObjType::BoundMethod => {
                     let bound = as_bound_method(callee);
                     *self.stack_top.offset(-arg_count as isize - 1) = bound.value().receiver;
@@ -178,7 +182,7 @@ impl VM {
                 }
                 ObjType::Class => {
                     let mut class = as_class(callee);
-                    *self.stack_top.offset(-arg_count as isize - 1) = obj_val(new_instance(class));
+                    *self.stack_top.offset(-arg_count as isize - 1) = new_instance(class).into();
                     if let Some(initializer) = class.value_mut().methods.get(self.init_string) {
                         return self.call(as_closure(initializer), arg_count);
                     } else if arg_count != 0 {
@@ -198,6 +202,7 @@ impl VM {
                 _ => {}
             }
         }
+
         runtime_error!(self, "Can only call functions and classes.");
         false
     }
@@ -247,7 +252,7 @@ impl VM {
 
         let bound = new_bound_method(self.peek(0), as_closure(method));
         self.pop();
-        self.push(obj_val(bound));
+        self.push(bound.into());
         true
     }
 
@@ -310,7 +315,7 @@ impl VM {
         let result = take_string(array);
         self.pop();
         self.pop();
-        self.push(obj_val(result));
+        self.push(result.into());
     }
 
     unsafe fn run(&mut self) -> InterpretResult {
@@ -342,16 +347,20 @@ impl VM {
             };
         }
         macro_rules! binary_op {
-            ($value_type:ident, $op:tt) => {{
+            ($op:tt) => {{
                 let shut_up_borrow_checker_0 = self.peek(0);
                 let shut_up_borrow_checker_1 = self.peek(1);
-                if !is_number(shut_up_borrow_checker_0) || !is_number(shut_up_borrow_checker_1) {
-                    runtime_error!(self, "Operands must be numbers.");
-                    return InterpretResult::RuntimeError;
+                match (shut_up_borrow_checker_0.as_number(), shut_up_borrow_checker_1.as_number()) {
+                    (Some(_), Some(_)) => {
+                        let b = self.pop().as_number().unwrap();
+                        let a = self.pop().as_number().unwrap();
+                        self.push((a $op b).into());
+                    }
+                    _ => {
+                        runtime_error!(self, "Operands must be numbers.");
+                        return InterpretResult::RuntimeError;
+                    }
                 }
-                let b = as_number(self.pop());
-                let a = as_number(self.pop());
-                self.push($value_type(a $op b));
             }}
         }
 
@@ -376,9 +385,9 @@ impl VM {
                     let constant = read_constant!();
                     self.push(constant);
                 }
-                i if i == OpCode::Nil as u8 => self.push(NIL_VAL),
-                i if i == OpCode::True as u8 => self.push(bool_val(true)),
-                i if i == OpCode::False as u8 => self.push(bool_val(false)),
+                i if i == OpCode::Nil as u8 => self.push(Value::Nil),
+                i if i == OpCode::True as u8 => self.push(true.into()),
+                i if i == OpCode::False as u8 => self.push(false.into()),
                 i if i == OpCode::List as u8 => {
                     let count = read_byte!();
                     // TODO: vecs won't trigger gc...
@@ -393,7 +402,7 @@ impl VM {
                     }
                     let mut list = new_list();
                     list.value_mut().items = items;
-                    self.push(obj_val(list));
+                    self.push(list.into());
                 }
                 i if i == OpCode::Pop as u8 => {
                     self.pop();
@@ -506,12 +515,12 @@ impl VM {
                         return InterpretResult::RuntimeError;
                     }
 
-                    if !is_number(self.peek(0)) {
+                    if !self.peek(0).as_number().is_none() {
                         runtime_error!(self, "Index expression must be a number.");
                         return InterpretResult::RuntimeError;
                     }
 
-                    let index = as_number(self.pop());
+                    let index = self.pop().as_number().unwrap();
                     let list = as_list(self.pop());
 
                     let val = list.value().items[index as usize];
@@ -520,40 +529,41 @@ impl VM {
                 i if i == OpCode::Equal as u8 => {
                     let b = self.pop();
                     let a = self.pop();
-                    self.push(bool_val(values_equal(a, b)));
+                    self.push((a == b).into());
                 }
-                i if i == OpCode::Greater as u8 => binary_op!(bool_val, >),
-                i if i == OpCode::Less as u8 => binary_op!(bool_val, <),
+                i if i == OpCode::Greater as u8 => binary_op!(>),
+                i if i == OpCode::Less as u8 => binary_op!(<),
                 i if i == OpCode::Not as u8 => {
                     let shut_up_borrow_checker = self.pop();
-                    self.push(bool_val(is_falsey(shut_up_borrow_checker)))
+                    self.push(shut_up_borrow_checker.is_falsey().into())
                 }
                 i if i == OpCode::Negate as u8 => {
-                    if !is_number(self.peek(0)) {
+                    if self.peek(0).as_number().is_none() {
                         runtime_error!(self, "Operand must be a number.");
                         return InterpretResult::RuntimeError;
                     }
                     let shut_up_borrow_checker = self.pop();
-                    self.push(number_val(-as_number(shut_up_borrow_checker)));
+                    self.push((-shut_up_borrow_checker.as_number().unwrap()).into());
                 }
                 i if i == OpCode::Add as u8 => {
                     if is_string(self.peek(0)) && is_string(self.peek(1)) {
                         self.concatenate();
-                    } else if is_number(self.peek(0)) && is_number(self.peek(1)) {
-                        let b = as_number(self.pop());
-                        let a = as_number(self.pop());
-                        self.push(number_val(a + b));
+                    } else if self.peek(0).as_number().is_some()
+                        && self.peek(1).as_number().is_some()
+                    {
+                        let b = self.pop().as_number().unwrap();
+                        let a = self.pop().as_number().unwrap();
+                        self.push((a + b).into());
                     } else {
                         runtime_error!(self, "Operands must be two numbers or two strings.");
                         return InterpretResult::RuntimeError;
                     }
                 }
-                i if i == OpCode::Subtract as u8 => binary_op!(number_val, -),
-                i if i == OpCode::Multiply as u8 => binary_op!(number_val, *),
-                i if i == OpCode::Divide as u8 => binary_op!(number_val, /),
+                i if i == OpCode::Subtract as u8 => binary_op!(-),
+                i if i == OpCode::Multiply as u8 => binary_op!(*),
+                i if i == OpCode::Divide as u8 => binary_op!(/),
                 i if i == OpCode::Print as u8 => {
-                    print_value(self.pop());
-                    println!("");
+                    println!("{}", self.pop());
                 }
                 i if i == OpCode::Jump as u8 => {
                     let offset = read_short!();
@@ -561,7 +571,7 @@ impl VM {
                 }
                 i if i == OpCode::JumpIfFalse as u8 => {
                     let offset = read_short!();
-                    if is_falsey(self.peek(0)) {
+                    if self.peek(0).is_falsey() {
                         (*frame).ip += usize::from(offset);
                     }
                 }
@@ -597,7 +607,7 @@ impl VM {
                 i if i == OpCode::Closure as u8 => {
                     let function = as_function(read_constant!());
                     let mut closure = new_closure(function);
-                    self.push(obj_val(closure));
+                    self.push(closure.into());
                     for i in 0..closure.value().upvalues.count() {
                         let is_local = read_byte!();
                         let index = read_byte!();
@@ -627,7 +637,7 @@ impl VM {
                     frame = &mut self.frames[self.frame_count as usize - 1];
                 }
                 i if i == OpCode::Class as u8 => {
-                    self.push(obj_val(new_class(read_string!())));
+                    self.push(new_class(read_string!()).into());
                 }
                 i if i == OpCode::Inherit as u8 => {
                     let superclass = self.peek(1);
@@ -659,10 +669,10 @@ impl VM {
         }
         let function = function.unwrap();
 
-        self.push(obj_val(function));
+        self.push(function.into());
         let closure = new_closure(function);
         self.pop();
-        self.push(obj_val(closure));
+        self.push(closure.into());
         self.call(closure, 0);
 
         let result = self.run();
@@ -679,8 +689,4 @@ impl Drop for VM {
             free_objects();
         }
     }
-}
-
-unsafe fn is_falsey(value: Value) -> bool {
-    is_nil(value) || (is_bool(value) && !as_bool(value))
 }

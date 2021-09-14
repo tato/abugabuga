@@ -1,4 +1,4 @@
-use memory::{gc_track_vm};
+use memory::gc_track_vm;
 use std::{env, fs, process};
 use vm::{InterpretResult, VM};
 

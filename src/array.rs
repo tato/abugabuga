@@ -3,7 +3,11 @@ use std::{
     ptr, slice,
 };
 
-use crate::{memory::{self, Ref, mark_object, mark_value}, object::{ObjString,}, value::{bool_val, is_nil, Value, NIL_VAL}};
+use crate::{
+    memory::{self, mark_object, mark_value, Ref},
+    object::ObjString,
+    value::Value,
+};
 
 fn grow_capacity(capacity: usize) -> usize {
     if capacity < 8 {
@@ -188,7 +192,7 @@ impl Table {
 
         let entry = unsafe { &mut *find_entry(self.entries, self.capacity, key) };
         let is_new_key = entry.key.is_none();
-        if is_new_key && is_nil(entry.value) {
+        if is_new_key && entry.value.is_nil() {
             self.count += 1;
         }
 
@@ -208,7 +212,7 @@ impl Table {
         }
 
         entry.key = None;
-        entry.value = bool_val(true);
+        entry.value = true.into();
 
         true
     }
@@ -233,7 +237,7 @@ impl Table {
             let entry = unsafe { &mut *self.entries.offset(index as isize) };
             match entry.key {
                 None => {
-                    if is_nil(entry.value) {
+                    if entry.value.is_nil() {
                         return None;
                     }
                 }
@@ -280,7 +284,7 @@ fn find_entry(entries: *mut Entry, capacity: usize, key_ref: Ref<ObjString>) -> 
         let entry = unsafe { &mut *entries.add(index as usize) };
         match entry.key {
             None => {
-                if is_nil(entry.value) {
+                if entry.value.is_nil() {
                     // empty entry
                     return if tombstone != ptr::null_mut() {
                         tombstone
@@ -295,7 +299,7 @@ fn find_entry(entries: *mut Entry, capacity: usize, key_ref: Ref<ObjString>) -> 
                 }
             }
             Some(entry_key) => {
-                if entry_key.same_ptr(&key_ref) {
+                if entry_key.has_same_ptr_as(&key_ref) {
                     return entry;
                 }
             }
@@ -310,7 +314,7 @@ unsafe fn adjust_capacity(table: *mut Table, capacity: usize) {
     for i in 0..capacity {
         let e = &mut *entries.offset(i as isize);
         e.key = None;
-        e.value = NIL_VAL;
+        e.value = Value::NIL;
     }
 
     let table = &mut *table;
@@ -333,7 +337,6 @@ unsafe fn adjust_capacity(table: *mut Table, capacity: usize) {
     table.entries = entries;
     table.capacity = capacity;
 }
-
 
 impl Index<Range<usize>> for Table {
     type Output = [Entry];

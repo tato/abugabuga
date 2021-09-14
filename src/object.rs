@@ -1,14 +1,21 @@
-use std::{
-    str,
-};
+use std::str;
 
-use crate::{array::{Array, Table}, chunk::{init_chunk, Chunk}, memory::{ObjType, Ref, allocate_object, gc_find_interned, gc_intern_string, gc_track_constant_for_chunk_or_strings_table, gc_untrack_constant_for_chunk_or_strings_table}, value::{as_erased_ref, is_obj, obj_val, print_value, Value, NIL_VAL}};
+use crate::{
+    array::{Array, Table},
+    chunk::{init_chunk, Chunk},
+    memory::{
+        allocate_object, gc_find_interned, gc_intern_string,
+        gc_track_constant_for_chunk_or_strings_table,
+        gc_untrack_constant_for_chunk_or_strings_table, ObjType, Ref,
+    },
+    value::Value,
+};
 
 unsafe fn allocate_string(chars: Array<u8>, hash: u32) -> Ref<ObjString> {
     let mut string = allocate_object::<ObjString>(ObjType::String);
     string.value_mut().chars = chars;
     string.value_mut().hash = hash;
-    gc_track_constant_for_chunk_or_strings_table(obj_val(string));
+    gc_track_constant_for_chunk_or_strings_table(string.into());
     gc_intern_string(string);
     gc_untrack_constant_for_chunk_or_strings_table();
     string
@@ -23,8 +30,8 @@ unsafe fn hash_string(key: &[u8]) -> u32 {
     hash
 }
 
-pub unsafe fn obj_type(value: Value) -> ObjType {
-    as_erased_ref(value).ty()
+pub fn obj_type(value: Value) -> ObjType {
+    value.as_erased_ref().expect("Value should be a Ref").ty()
 }
 
 pub unsafe fn _is_function(value: Value) -> bool {
@@ -60,42 +67,41 @@ pub unsafe fn is_list(value: Value) -> bool {
 }
 
 pub unsafe fn as_function(value: Value) -> Ref<ObjFunction> {
-    as_erased_ref(value).force_into()
+    value.as_erased_ref().unwrap().force_into()
 }
 
 pub unsafe fn as_native(value: Value) -> NativeFn {
-    let rf: Ref<ObjNative> = as_erased_ref(value).force_into();
+    let rf: Ref<ObjNative> = value.as_erased_ref().unwrap().force_into();
     rf.value().function
 }
 
 pub unsafe fn as_string(value: Value) -> Ref<ObjString> {
-    as_erased_ref(value).force_into()
+    value.as_erased_ref().unwrap().force_into()
 }
 
 pub unsafe fn as_closure(value: Value) -> Ref<ObjClosure> {
-    as_erased_ref(value).force_into()
+    value.as_erased_ref().unwrap().force_into()
 }
 
 pub unsafe fn as_class(value: Value) -> Ref<ObjClass> {
-    as_erased_ref(value).force_into()
+    value.as_erased_ref().unwrap().force_into()
 }
 
 pub unsafe fn as_instance(value: Value) -> Ref<ObjInstance> {
-    as_erased_ref(value).force_into()
+    value.as_erased_ref().unwrap().force_into()
 }
 
 pub unsafe fn as_bound_method(value: Value) -> Ref<ObjBoundMethod> {
-    as_erased_ref(value).force_into()
+    value.as_erased_ref().unwrap().force_into()
 }
 
 pub unsafe fn as_list(value: Value) -> Ref<ObjList> {
-    as_erased_ref(value).force_into()
+    value.as_erased_ref().unwrap().force_into()
 }
 
 unsafe fn is_obj_type(value: Value, ty: ObjType) -> bool {
-    is_obj(value) && as_erased_ref(value).ty() == ty
+    value.as_erased_ref().is_some() && value.as_erased_ref().unwrap().ty() == ty
 }
-
 
 #[repr(C)]
 pub struct ObjFunction {
@@ -233,48 +239,66 @@ pub unsafe fn copy_string(chars: &[u8]) -> Ref<ObjString> {
 pub unsafe fn new_upvalue(slot: *mut Value) -> Ref<ObjUpvalue> {
     let mut upvalue = allocate_object::<ObjUpvalue>(ObjType::Upvalue);
     upvalue.value_mut().location = slot;
-    upvalue.value_mut().closed = NIL_VAL;
+    upvalue.value_mut().closed = Value::NIL;
     upvalue.value_mut().next = None;
     upvalue
 }
 
-unsafe fn print_function(function: Ref<ObjFunction>) {
+fn print_function(function: Ref<ObjFunction>, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     match function.value().name {
-        None => print!("<script>"),
+        None => write!(f, "<script>"),
         Some(name) => {
-            print!("<fn {}>", str::from_utf8_unchecked(&name.value().chars[..]));
+            write!(
+                f,
+                "<fn {}>",
+                str::from_utf8(&name.value().chars[..]).expect("Function name should be utf-8")
+            )
         }
     }
 }
 
-pub unsafe fn print_object(value: Value) {
+pub fn print_object(value: &Value, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    let value = *value;
     match obj_type(value) {
         ObjType::List => {
-            let list = as_list(value);
-            print!("[ ");
+            let list = unsafe { as_list(value) };
+            write!(f, "[ ")?;
             for val in &list.value().items {
-                print_value(*val);
-                print!(", ");
+                write!(f, "{}", *val)?;
+                write!(f, ", ")?;
             }
-            print!("]");
+            write!(f, "]")
         }
         ObjType::Instance => {
-            print_object(obj_val(as_instance(value).value().class));
-            print!(" instance");
+            let ins = unsafe { as_instance(value) };
+            print_object(&ins.value().class.into(), f)?;
+            write!(f, " instance")
         }
         ObjType::Class => {
-            print_object(obj_val(as_class(value).value().name));
+            let cl = unsafe { as_class(value) };
+            print_object(&cl.value().name.into(), f)
         }
-        ObjType::Function => print_function(as_function(value)),
-        ObjType::Native => print!("<native fn>"),
-        ObjType::String => print!(
-            "{}",
-            str::from_utf8_unchecked(&as_string(value).value().chars[..])
-        ),
-        ObjType::Upvalue => print!("upvalue"),
-        ObjType::Closure => print_function(as_closure(value).value().function),
+        ObjType::Function => {
+            let fun = unsafe { as_function(value) };
+            print_function(fun, f)
+        }
+        ObjType::Native => write!(f, "<native fn>"),
+        ObjType::String => {
+            let st = unsafe { as_string(value) };
+            write!(
+                f,
+                "{}",
+                str::from_utf8(&st.value().chars[..]).expect("String object should contain Utf-8")
+            )
+        }
+        ObjType::Upvalue => write!(f, "upvalue"),
+        ObjType::Closure => {
+            let clos = unsafe { as_closure(value) };
+            print_function(clos.value().function, f)
+        }
         ObjType::BoundMethod => {
-            print_function(as_bound_method(value).value().method.value().function)
+            let bm = unsafe { as_bound_method(value) };
+            print_function(bm.value().method.value().function, f)
         }
     }
 }

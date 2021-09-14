@@ -1,6 +1,13 @@
 use std::{mem, ptr, str, u8};
 
-use crate::{UINT8_COUNT, chunk::{add_constant, write_chunk, Chunk, OpCode}, memory::{Ref, gc_track_parser, gc_untrack_parser, mark_object}, object::{copy_string, new_function, ObjFunction}, scanner::{Scanner, Token, TokenType}, value::{number_val, obj_val, Value}};
+use crate::{
+    chunk::{add_constant, write_chunk, Chunk, OpCode},
+    memory::{gc_track_parser, gc_untrack_parser, mark_object, Ref},
+    object::{copy_string, new_function, ObjFunction},
+    scanner::{Scanner, Token, TokenType},
+    value::Value,
+    UINT8_COUNT,
+};
 
 #[cfg(feature = "debug_print_code")]
 use crate::debug::disassemble_chunk;
@@ -316,7 +323,7 @@ impl<'source> Parser<'source> {
     }
 
     unsafe fn identifier_constant(&mut self, name: &Token) -> u8 {
-        self.make_constant(obj_val(copy_string(name.lexeme.as_bytes())))
+        self.make_constant(copy_string(name.lexeme.as_bytes()).into())
     }
 
     unsafe fn resolve_local(&mut self, compiler: *mut Compiler, name: &Token) -> i32 {
@@ -488,7 +495,7 @@ impl<'source> Parser<'source> {
         self.block();
 
         let function = self.end_compiler();
-        let shut_up_borrow_checker = self.make_constant(obj_val(function));
+        let shut_up_borrow_checker = self.make_constant(function.into());
         self.emit_bytes(OpCode::Closure as u8, shut_up_borrow_checker);
 
         for i in 0..function.value().upvalue_count {
@@ -862,7 +869,7 @@ unsafe fn number(parser: &mut Parser, _can_assign: bool) {
         .lexeme
         .parse()
         .expect("Token should be parseable as 32-bit floating point number.");
-    parser.emit_constant(number_val(value as f64));
+    parser.emit_constant((value as f64).into());
 }
 
 unsafe fn or(parser: &mut Parser, _can_assign: bool) {
@@ -879,7 +886,7 @@ unsafe fn or(parser: &mut Parser, _can_assign: bool) {
 unsafe fn string(parser: &mut Parser, _can_assign: bool) {
     let lexeme_len = parser.previous.lexeme.len();
     let contents_slice = &parser.previous.lexeme.as_bytes()[1..lexeme_len - 1];
-    parser.emit_constant(obj_val(copy_string(contents_slice)));
+    parser.emit_constant(copy_string(contents_slice).into());
 }
 
 unsafe fn list(parser: &mut Parser, _can_assign: bool) {
