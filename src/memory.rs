@@ -144,7 +144,7 @@ pub fn allocate_object<T>(ty: ObjType) -> Ref<T> {
     let object = reallocate(ptr::null_mut(), 0, size, align) as *mut RefStorage<T>;
     assert!(
         object != ptr::null_mut(),
-        "Probably unnecesary sanity check."
+        "Hopefully unnecesary sanity check."
     );
 
     unsafe {
