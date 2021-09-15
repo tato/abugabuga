@@ -21,13 +21,85 @@ use crate::{
 #[cfg(feature = "debug_log_gc")]
 use crate::value::{obj_val, print_value};
 
-pub fn allocate<T>(count: usize) -> *mut T {
-    crate::memory::reallocate(
-        std::ptr::null_mut(),
-        0,
-        std::mem::size_of::<T>() * count as usize,
-        std::mem::align_of::<T>(),
-    ) as *mut T
+
+// TODO: CHECK ALL UNSAFETY, PANIC WHEN NECESSARY
+pub fn reallocate(
+    pointer: *mut c_void,
+    old_size: usize,
+    new_size: usize,
+    align: usize,
+) -> *mut c_void {
+    #[cfg(feature = "debug_log_gc")]
+    {
+        println!(
+            "---> reallocate: [ pointer = {:?}, old_size = {}, new_size = {}, align = {} ]",
+            pointer, old_size, new_size, align
+        );
+    }
+
+    if old_size == 0 && new_size == 0 {
+        return pointer;
+    }
+
+    // TODO: NOT THREAD-SAFE
+    let gc = unsafe { &mut GC };
+
+    assert!(
+        gc.bytes_allocated >= old_size,
+        "Can't have allocated {} bytes if only {} bytes are allocated so far.",
+        old_size,
+        gc.bytes_allocated
+    );
+    gc.bytes_allocated -= old_size;
+    gc.bytes_allocated += new_size;
+
+    if new_size > old_size {
+        if cfg!(feature = "debug_stress_gc") || gc.bytes_allocated > gc.next_gc {
+            // TODO: WHAT ARE THE PRE-CONDITIONS FOR collect_garbage?
+            unsafe { collect_garbage() };
+        }
+    }
+
+    let result = if pointer == ptr::null_mut() && new_size > 0 {
+        let layout = alloc::Layout::from_size_align(new_size, align).unwrap();
+        let result = unsafe { alloc::alloc(layout) };
+        assert!(
+            result != ptr::null_mut(),
+            "reallocate(pointer = {:?}, old_size = {}, new_size = {}, align = {}) -> {:?}",
+            pointer,
+            old_size,
+            new_size,
+            align,
+            result
+        );
+        result
+    } else {
+        let layout = alloc::Layout::from_size_align(old_size, align).unwrap();
+        if new_size == 0 {
+            unsafe {
+                alloc::dealloc(pointer as *mut u8, layout);
+            }
+            ptr::null_mut()
+        } else {
+            let result = unsafe { alloc::realloc(pointer as *mut u8, layout, new_size) };
+            assert!(
+                result != ptr::null_mut(),
+                "reallocate(pointer = {:?}, old_size = {}, new_size = {}, align = {}) -> {:?}",
+                pointer,
+                old_size,
+                new_size,
+                align,
+                result
+            );
+
+            result
+        }
+    };
+    #[cfg(feature = "debug_log_gc")]
+    {
+        println!("<--- reallocate: [ {:?} ]", result);
+    }
+    result as *mut c_void
 }
 
 fn free<T>(mut rf: Ref<T>) {
@@ -189,72 +261,6 @@ pub static mut GC: GarbageCollector = GarbageCollector {
     gray_stack: vec![],
 };
 
-pub fn reallocate(
-    pointer: *mut c_void,
-    old_size: usize,
-    new_size: usize,
-    align: usize,
-) -> *mut c_void {
-    #[cfg(feature = "debug_log_gc")]
-    {
-        println!(
-            "++++ reallocate(pointer = {:?}, old_size = {}, new_size = {}, align = {})",
-            pointer, old_size, new_size, align
-        );
-    }
-
-    let gc = unsafe { &mut GC };
-
-    gc.bytes_allocated -= old_size;
-    gc.bytes_allocated += new_size;
-
-    if new_size > old_size {
-        if cfg!(feature = "debug_stress_gc") || gc.bytes_allocated > gc.next_gc {
-            unsafe { collect_garbage() };
-        }
-    }
-
-    let result = if pointer == ptr::null_mut() {
-        let layout = alloc::Layout::from_size_align(new_size, align).unwrap();
-        let result = unsafe { alloc::alloc(layout) };
-        assert!(
-            result != ptr::null_mut(),
-            "reallocate(pointer = {:?}, old_size = {}, new_size = {}, align = {}) -> {:?}",
-            pointer,
-            old_size,
-            new_size,
-            align,
-            result
-        );
-        result
-    } else {
-        let layout = alloc::Layout::from_size_align(old_size, align).unwrap();
-        if new_size == 0 {
-            unsafe {
-                alloc::dealloc(pointer as *mut u8, layout);
-            }
-            ptr::null_mut()
-        } else {
-            let result = unsafe { alloc::realloc(pointer as *mut u8, layout, new_size) };
-            assert!(
-                result != ptr::null_mut(),
-                "reallocate(pointer = {:?}, old_size = {}, new_size = {}, align = {}) -> {:?}",
-                pointer,
-                old_size,
-                new_size,
-                align,
-                result
-            );
-
-            result
-        }
-    };
-    #[cfg(feature = "debug_log_gc")]
-    {
-        println!("---- reallocate -> {:?}", result);
-    }
-    result as *mut c_void
-}
 
 pub unsafe fn gc_track_vm(vm: *mut VM) {
     GC.vm = vm;
