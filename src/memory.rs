@@ -1,7 +1,5 @@
 use std::{
-    alloc,
-    ffi::c_void,
-    mem,
+    alloc, mem,
     ptr::{self, NonNull},
     vec,
 };
@@ -21,28 +19,47 @@ use crate::{
 #[cfg(feature = "debug_log_gc")]
 use crate::value::{obj_val, print_value};
 
-
-// TODO: CHECK ALL UNSAFETY, PANIC WHEN NECESSARY
-pub fn reallocate(
-    pointer: *mut c_void,
-    old_size: usize,
-    new_size: usize,
-    align: usize,
-) -> *mut c_void {
-    #[cfg(feature = "debug_log_gc")]
-    {
+/// just realloc
+/// Guaranteed to not return a null pointer if new_count > 0 and old_count != new_count
+///
+/// # Safety
+///
+/// * pointer must either have been allocated by this function, or be null
+///
+/// * old_count must be the same value new_count was when the memory referenced by
+/// pointer was allocated
+///
+/// * "new_size, when rounded up to the nearest multiple of layout.align(), must
+/// not overflow (i.e., the rounded value must be less than usize::MAX)."
+///
+/// # Errors
+/// TODO
+pub unsafe fn reallocate<T>(pointer: *mut T, old_count: usize, new_count: usize) -> *mut T {
+    if cfg!(feature = "debug_log_gc") {
         println!(
-            "---> reallocate: [ pointer = {:?}, old_size = {}, new_size = {}, align = {} ]",
-            pointer, old_size, new_size, align
+            "---> reallocate: [ pointer = {:?}, old_count = {}, new_count = {}, T = {} ]",
+            pointer,
+            old_count,
+            new_count,
+            std::any::type_name::<T>(),
         );
     }
 
-    if old_size == 0 && new_size == 0 {
+    assert!(mem::size_of::<T>() > 0, "Can't allocate 0-sized types.");
+
+    if old_count == new_count {
+        if cfg!(feature = "debug_log_gc") {
+            println!("<--- reallocate: [ {:?} ]", pointer);
+        }
         return pointer;
     }
 
-    // TODO: NOT THREAD-SAFE
-    let gc = unsafe { &mut GC };
+    let old_size = mem::size_of::<T>() * old_count;
+    let new_size = mem::size_of::<T>() * new_count;
+    let align = mem::align_of::<T>();
+
+    // TODO: SAFETY: NOT THREAD-SAFE
+    let gc = &mut GC;
 
     assert!(
         gc.bytes_allocated >= old_size,
@@ -55,14 +72,26 @@ pub fn reallocate(
 
     if new_size > old_size {
         if cfg!(feature = "debug_stress_gc") || gc.bytes_allocated > gc.next_gc {
-            // TODO: WHAT ARE THE PRE-CONDITIONS FOR collect_garbage?
-            unsafe { collect_garbage() };
+            // TODO: SAFETY: WHAT ARE THE PRE-CONDITIONS, IF ANY, FOR collect_garbage?
+            collect_garbage();
         }
     }
 
-    let result = if pointer == ptr::null_mut() && new_size > 0 {
-        let layout = alloc::Layout::from_size_align(new_size, align).unwrap();
-        let result = unsafe { alloc::alloc(layout) };
+    let result;
+
+    if pointer == ptr::null_mut() && new_count > 0 {
+        // Case 1: new allocation
+        let (layout, offset) = alloc::Layout::new::<T>()
+            .repeat(new_count)
+            .expect("new_count should not be big enough for a 64-bit integer to overflow");
+        assert!(
+            mem::size_of::<T>() == offset,
+            "Array offset should be same value as type size in bytes."
+        );
+
+        // SAFETY: layout has non-zero size because T is asserted to have >0 size and
+        // new_count >0 in this branch.
+        result = alloc::alloc(layout);
         assert!(
             result != ptr::null_mut(),
             "reallocate(pointer = {:?}, old_size = {}, new_size = {}, align = {}) -> {:?}",
@@ -72,16 +101,25 @@ pub fn reallocate(
             align,
             result
         );
-        result
     } else {
-        let layout = alloc::Layout::from_size_align(old_size, align).unwrap();
-        if new_size == 0 {
-            unsafe {
-                alloc::dealloc(pointer as *mut u8, layout);
-            }
-            ptr::null_mut()
+        let (layout, _offset) = alloc::Layout::new::<T>()
+            .repeat(old_count)
+            .expect("old_count should not be big enough for a 64-bit integer to overflow");
+
+        if new_count == 0 {
+            // Case 2: Deallocation
+            // SAFETY: pointer being allocated by this allocator and layout being the same
+            // are covered by the preconditions of reallocate
+            alloc::dealloc(pointer as *mut u8, layout);
+            result = ptr::null_mut();
         } else {
-            let result = unsafe { alloc::realloc(pointer as *mut u8, layout, new_size) };
+            // Case 3: Realloc
+            // SAFETY: pointer being allocated by this allocator and layout being the same
+            // are covered by the preconditions of reallocate.
+            // new_size is non-zero because T is asserted to be >0 and new_count >0 in this branch.
+            // overflow condition is tentatively written as a precond for reallocate too, though I
+            // would like to change that TODO TODO TODO
+            result = alloc::realloc(pointer as *mut u8, layout, new_size);
             assert!(
                 result != ptr::null_mut(),
                 "reallocate(pointer = {:?}, old_size = {}, new_size = {}, align = {}) -> {:?}",
@@ -91,24 +129,14 @@ pub fn reallocate(
                 align,
                 result
             );
-
-            result
         }
     };
+
     #[cfg(feature = "debug_log_gc")]
     {
         println!("<--- reallocate: [ {:?} ]", result);
     }
-    result as *mut c_void
-}
-
-fn free<T>(mut rf: Ref<T>) {
-    reallocate(
-        rf.header_mut() as *mut GcHeader as *mut std::ffi::c_void,
-        std::mem::size_of::<RefStorage<T>>(),
-        0,
-        std::mem::align_of::<RefStorage<T>>(),
-    );
+    result as *mut T
 }
 
 // TODO: WHERE AND HOW SHOULD THE POSSIBLE TYPES BE DEFINED?
@@ -210,14 +238,7 @@ struct GcHeader {
 }
 
 pub fn allocate_object<T>(ty: ObjType) -> Ref<T> {
-    let size = mem::size_of::<RefStorage<T>>();
-    let align = mem::align_of::<RefStorage<T>>();
-
-    let object = reallocate(ptr::null_mut(), 0, size, align) as *mut RefStorage<T>;
-    assert!(
-        object != ptr::null_mut(),
-        "Hopefully unnecesary sanity check."
-    );
+    let object: *mut RefStorage<T> = unsafe { reallocate(ptr::null_mut(), 0, 1) };
 
     unsafe {
         let header = &mut (*object).header;
@@ -260,7 +281,6 @@ pub static mut GC: GarbageCollector = GarbageCollector {
     objects: ptr::null_mut(),
     gray_stack: vec![],
 };
-
 
 pub unsafe fn gc_track_vm(vm: *mut VM) {
     GC.vm = vm;
@@ -382,6 +402,10 @@ unsafe fn blacken_object(header: *mut GcHeader) {
         }
         ObjType::Native | ObjType::String => {}
     }
+}
+
+unsafe fn free<T>(rf: Ref<T>) {
+    reallocate(rf.inner.as_ptr(), 1, 0);
 }
 
 unsafe fn free_object(header: *mut GcHeader) {

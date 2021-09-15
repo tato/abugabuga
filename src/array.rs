@@ -17,33 +17,6 @@ fn grow_array_capacity(capacity: usize) -> usize {
     }
 }
 
-fn grow_array<T>(pointer: *mut T, old_count: usize, new_count: usize) -> *mut T {
-    memory::reallocate(
-        pointer as *mut std::ffi::c_void,
-        std::mem::size_of::<T>() * old_count,
-        std::mem::size_of::<T>() * new_count,
-        std::mem::align_of::<T>(),
-    ) as *mut T
-}
-
-fn allocate_table<T>(count: usize) -> *mut T {
-    memory::reallocate(
-        std::ptr::null_mut(),
-        0,
-        std::mem::size_of::<T>() * count as usize,
-        std::mem::align_of::<T>(),
-    ) as *mut T
-}
-
-fn free_array_or_table<T>(pointer: *mut T, old_count: usize) {
-    memory::reallocate(
-        pointer as *mut std::ffi::c_void,
-        std::mem::size_of::<T>() * old_count,
-        0,
-        std::mem::align_of::<T>(),
-    );
-}
-
 pub struct Array<T> {
     capacity: usize,
     count: usize,
@@ -60,10 +33,11 @@ impl<T> Array<T> {
     }
 
     pub fn with_capacity(capacity: usize) -> Self {
+        let values = unsafe { memory::reallocate(ptr::null_mut(), 0, capacity) };
         Array {
             capacity,
             count: 0,
-            values: grow_array(ptr::null_mut(), 0, capacity),
+            values,
         }
     }
 
@@ -71,7 +45,7 @@ impl<T> Array<T> {
         if self.capacity < self.count + 1 {
             let old_capacity = self.capacity;
             self.capacity = grow_array_capacity(self.capacity);
-            self.values = grow_array(self.values, old_capacity, self.capacity);
+            self.values = unsafe { memory::reallocate(self.values, old_capacity, self.capacity) };
         }
         unsafe {
             *self.values.add(self.count) = value;
@@ -86,7 +60,9 @@ impl<T> Array<T> {
 
     // TODO: impl Drop
     pub fn free(&mut self) {
-        free_array_or_table(self.values, self.capacity);
+        unsafe {
+            memory::reallocate(self.values, self.capacity, 0);
+        }
     }
 }
 
@@ -279,7 +255,9 @@ impl Table {
 
     // TODO: impl Drop
     pub fn free(&mut self) {
-        free_array_or_table(self.entries, self.capacity);
+        unsafe {
+            memory::reallocate(self.entries, self.capacity, 0);
+        }
     }
 }
 
@@ -319,7 +297,7 @@ fn find_entry(entries: *mut Entry, capacity: usize, key_ref: Ref<ObjString>) -> 
 }
 
 unsafe fn adjust_capacity(table: *mut Table, capacity: usize) {
-    let entries: *mut Entry = allocate_table(capacity);
+    let entries: *mut Entry = memory::reallocate(ptr::null_mut(), 0, capacity);
     for i in 0..capacity {
         let e = &mut *entries.offset(i as isize);
         e.key = None;
@@ -342,7 +320,8 @@ unsafe fn adjust_capacity(table: *mut Table, capacity: usize) {
         }
     }
 
-    free_array_or_table(table.entries, table.capacity);
+    memory::reallocate(table.entries, table.capacity, 0);
+
     table.entries = entries;
     table.capacity = capacity;
 }
