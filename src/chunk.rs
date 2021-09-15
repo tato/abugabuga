@@ -74,14 +74,14 @@ pub unsafe fn free_chunk(chunk: *mut Chunk) {
 
 pub unsafe fn write_chunk(chunk: *mut Chunk, byte: u8, line: u16) {
     let chunk = &mut *chunk;
-    chunk.code.write(byte);
-    chunk.lines.write(line);
+    chunk.code.append(byte);
+    chunk.lines.append(line);
 }
 
 pub unsafe fn add_constant(chunk: *mut Chunk, value: Value) -> i32 {
     gc_track_constant_for_chunk_or_strings_table(value);
     let chunk = &mut *chunk;
-    chunk.constants.write(value);
+    chunk.constants.append(value);
     gc_untrack_constant_for_chunk_or_strings_table();
     chunk.constants.count() as i32 - 1
 }

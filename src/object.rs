@@ -170,7 +170,7 @@ pub unsafe fn new_closure(function: Ref<ObjFunction>) -> Ref<ObjClosure> {
     let upvalue_count = function.value().upvalue_count;
     let mut upvalues = Array::with_capacity(upvalue_count as usize);
     for _i in 0..upvalue_count {
-        upvalues.write(None);
+        upvalues.append(None);
     }
 
     let mut closure = allocate_object::<ObjClosure>(ObjType::Closure);

@@ -9,14 +9,6 @@ use crate::{
     value::Value,
 };
 
-fn grow_array_capacity(capacity: usize) -> usize {
-    if capacity < 8 {
-        8
-    } else {
-        capacity * 2
-    }
-}
-
 pub struct Array<T> {
     capacity: usize,
     count: usize,
@@ -41,10 +33,18 @@ impl<T> Array<T> {
         }
     }
 
-    pub fn write(&mut self, value: T) {
+    fn grow_capacity(&mut self) {
+        if self.capacity < 8 {
+            self.capacity = 8;
+        } else {
+            self.capacity *= 2;
+        }
+    }
+
+    pub fn append(&mut self, value: T) {
         if self.capacity < self.count + 1 {
             let old_capacity = self.capacity;
-            self.capacity = grow_array_capacity(self.capacity);
+            self.grow_capacity();
             self.values = unsafe { memory::reallocate(self.values, old_capacity, self.capacity) };
         }
         unsafe {
@@ -169,10 +169,56 @@ impl Table {
         Some(entry.value)
     }
 
+    fn grow_capacity(&mut self) {
+        if self.capacity < 8 {
+            self.capacity = 8;
+        } else {
+            self.capacity *= 2;
+        }
+    }
+
+    fn grow_pointer(&mut self) {
+        let old_entries = self.entries;
+        let old_capacity = self.capacity;
+
+        self.grow_capacity();
+
+        self.entries = unsafe {
+            // SAFETY: ???
+            memory::reallocate(ptr::null_mut(), 0, self.capacity)
+        };
+        for i in 0..self.capacity {
+            // SAFETY: ???
+            let e = unsafe { &mut *self.entries.offset(i as isize) };
+            e.key = None;
+            e.value = Value::NIL;
+        }
+    
+        self.count = 0;
+    
+        for i in 0..old_capacity {
+            // SAFETY: ???
+            let entry = unsafe { &mut *old_entries.offset(i as isize) };
+            match entry.key {
+                None => continue,
+                Some(key) => {
+                    let dest = unsafe { &mut *find_entry(self.entries, self.capacity, key) };
+                    dest.key = entry.key;
+                    dest.value = entry.value;
+                    self.count += 1;
+                }
+            }
+        }
+    
+        unsafe {
+            // SAFETY: ???
+            memory::reallocate(old_entries, old_capacity, 0);
+        }
+    }
+
     pub fn set(&mut self, key: Ref<ObjString>, value: Value) -> bool {
         if self.count as f32 + 1.0 > self.capacity as f32 * TABLE_MAX_LOAD {
-            let capacity = grow_array_capacity(self.capacity);
-            unsafe { adjust_capacity(self, capacity) };
+            self.grow_pointer();
         }
 
         let entry = unsafe { &mut *find_entry(self.entries, self.capacity, key) };
@@ -294,36 +340,6 @@ fn find_entry(entries: *mut Entry, capacity: usize, key_ref: Ref<ObjString>) -> 
 
         index = (index + 1) & ((capacity - 1) as u32);
     }
-}
-
-unsafe fn adjust_capacity(table: *mut Table, capacity: usize) {
-    let entries: *mut Entry = memory::reallocate(ptr::null_mut(), 0, capacity);
-    for i in 0..capacity {
-        let e = &mut *entries.offset(i as isize);
-        e.key = None;
-        e.value = Value::NIL;
-    }
-
-    let table = &mut *table;
-    table.count = 0;
-
-    for i in 0..table.capacity {
-        let entry = &mut *table.entries.offset(i as isize);
-        match entry.key {
-            None => continue,
-            Some(key) => {
-                let dest = &mut *find_entry(entries, capacity, key);
-                dest.key = entry.key;
-                dest.value = entry.value;
-                table.count += 1;
-            }
-        }
-    }
-
-    memory::reallocate(table.entries, table.capacity, 0);
-
-    table.entries = entries;
-    table.capacity = capacity;
 }
 
 impl Index<Range<usize>> for Table {
