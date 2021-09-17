@@ -1,23 +1,14 @@
 use std::str;
 
-use crate::{
-    array::{Array, Table},
-    chunk::{init_chunk, Chunk},
-    memory::{
-        allocate_object, gc_find_interned, gc_intern_string,
-        gc_track_constant_for_chunk_or_strings_table,
-        gc_untrack_constant_for_chunk_or_strings_table, ObjType, Ref,
-    },
-    value::Value,
-};
+use crate::{array::{Array, Table}, chunk::{init_chunk, Chunk}, memory::{
+        allocate_object,ObjType, Ref,
+    }, value::Value};
 
 unsafe fn allocate_string(chars: Array<u8>, hash: u32) -> Ref<ObjString> {
     let mut string = allocate_object::<ObjString>(ObjType::String);
     string.value_mut().chars = chars;
     string.value_mut().hash = hash;
-    gc_track_constant_for_chunk_or_strings_table(string.into());
-    gc_intern_string(string);
-    gc_untrack_constant_for_chunk_or_strings_table();
+    todo!("interner.intern(string);");
     string
 }
 
@@ -218,7 +209,7 @@ pub unsafe fn new_bound_method(receiver: Value, method: Ref<ObjClosure>) -> Ref<
 
 pub unsafe fn take_string(mut chars: Array<u8>) -> Ref<ObjString> {
     let hash = hash_string(&chars[..]);
-    let interned = gc_find_interned(&chars[..], hash);
+    let interned = todo!("interner.find(&chars[..], hash);");
     if let Some(interned) = interned {
         chars.free();
         return interned;
@@ -228,7 +219,7 @@ pub unsafe fn take_string(mut chars: Array<u8>) -> Ref<ObjString> {
 
 pub unsafe fn copy_string(chars: &[u8]) -> Ref<ObjString> {
     let hash = hash_string(chars);
-    let interned = gc_find_interned(chars, hash);
+    let interned = todo!("interner.find(chars, hash);");
     if let Some(interned) = interned {
         return interned;
     }

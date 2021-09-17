@@ -3,19 +3,12 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use crate::{
-    array::{Array, Table},
-    chunk::OpCode,
-    compiler::compile,
-    memory::{free_objects, ObjType, Ref},
-    object::{
+use crate::{array::{Array, Table}, chunk::OpCode, compiler::compile, memory::{GarbageCollector, ObjType, Ref}, object::{
         as_bound_method, as_class, as_closure, as_function, as_instance, as_list, as_native,
         as_string, copy_string, is_class, is_instance, is_list, is_string, new_bound_method,
         new_class, new_closure, new_instance, new_list, new_native, new_upvalue, take_string,
         NativeFn, ObjClass, ObjClosure, ObjString, ObjUpvalue,
-    },
-    value::Value,
-};
+    }, value::Value};
 
 #[cfg(feature = "debug_trace_execution")]
 use crate::debug::disassemble_instruction;
@@ -31,6 +24,7 @@ pub struct CallFrame {
 }
 
 pub struct VM {
+    gc: GarbageCollector,
     pub frames: [CallFrame; FRAMES_MAX],
     pub frame_count: i32,
     pub stack: [Value; STACK_MAX],
@@ -95,7 +89,8 @@ macro_rules! runtime_error {
 
 impl VM {
     pub unsafe fn new() -> VM {
-        let vm: VM = VM {
+        let mut vm: VM = VM {
+            gc: GarbageCollector::new(),
             frames: [ZERO_CALL_FRAME; FRAMES_MAX],
             frame_count: 0,
             stack: [Value::NIL; STACK_MAX],
@@ -104,20 +99,18 @@ impl VM {
             init_string: Ref::dangling(),
             open_upvalues: None,
         };
-        vm
-    }
 
-    pub unsafe fn init(&mut self) {
-        let vm = self;
         vm.reset_stack();
 
         vm.globals = Table::new();
 
         vm.open_upvalues = None;
-        vm.init_string = copy_string("init".as_bytes());
+        vm.init_string = copy_string("init".as_bytes(), &vm.gc.interner);
 
         vm.define_native("clock", clock_native);
         vm.define_native("sqrt", sqrt_native);
+
+        vm
     }
 
     unsafe fn reset_stack(&mut self) {
@@ -127,7 +120,7 @@ impl VM {
     }
 
     unsafe fn define_native(&mut self, name: &str, function: NativeFn) {
-        self.push(copy_string(name.as_bytes()).into());
+        self.push(copy_string(name.as_bytes(), &self.interner).into());
         self.push(new_native(function).into());
         self.globals.set(as_string(self.stack[0]), self.stack[1]);
         self.pop();
@@ -312,7 +305,7 @@ impl VM {
         // ptr::copy_nonoverlapping(b.chars, chars.offset(a.length as isize), b.length as usize);
         // *chars.offset(length as isize) = 0;
 
-        let result = take_string(array);
+        let result = take_string(array, &self.interner);
         self.pop();
         self.pop();
         self.push(result.into());
@@ -686,7 +679,7 @@ impl Drop for VM {
         unsafe {
             self.globals.free();
             self.init_string = Ref::dangling();
-            free_objects();
+            self.gc.free_objects();
         }
     }
 }

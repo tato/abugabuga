@@ -1,9 +1,5 @@
 use crate::{
     array::Array,
-    memory::{
-        gc_track_constant_for_chunk_or_strings_table,
-        gc_untrack_constant_for_chunk_or_strings_table,
-    },
     value::Value,
 };
 
@@ -78,10 +74,21 @@ pub unsafe fn write_chunk(chunk: *mut Chunk, byte: u8, line: u16) {
     chunk.lines.append(line);
 }
 
+// pub unsafe fn gc_track_constant_for_chunk_or_strings_table(value: Value) {
+//     let vm = &mut *GC.vm;
+//     vm.push(value);
+// }
+
+// pub unsafe fn gc_untrack_constant_for_chunk_or_strings_table() {
+//     let vm = &mut *GC.vm;
+//     vm.pop();
+// }
+
 pub unsafe fn add_constant(chunk: *mut Chunk, value: Value) -> i32 {
-    gc_track_constant_for_chunk_or_strings_table(value);
+    todo!("add_constant");
+    // gc_track_constant_for_chunk_or_strings_table(value);
     let chunk = &mut *chunk;
     chunk.constants.append(value);
-    gc_untrack_constant_for_chunk_or_strings_table();
+    // gc_untrack_constant_for_chunk_or_strings_table();
     chunk.constants.count() as i32 - 1
 }

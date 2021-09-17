@@ -1,13 +1,6 @@
 use std::{mem, ptr, str, u8};
 
-use crate::{
-    chunk::{add_constant, write_chunk, Chunk, OpCode},
-    memory::{gc_track_parser, gc_untrack_parser, mark_object, Ref},
-    object::{copy_string, new_function, ObjFunction},
-    scanner::{Scanner, Token, TokenType},
-    value::Value,
-    UINT8_COUNT,
-};
+use crate::{UINT8_COUNT, chunk::{add_constant, write_chunk, Chunk, OpCode}, memory::{Ref}, object::{copy_string, new_function, ObjFunction}, scanner::{Scanner, Token, TokenType}, value::Value};
 
 #[cfg(feature = "debug_print_code")]
 use crate::debug::disassemble_chunk;
@@ -86,7 +79,7 @@ pub struct ClassCompiler {
     pub has_superclass: bool,
 }
 
-impl<'source> Parser<'source> {
+impl<'source, 'vm> Parser<'source, 'vm> {
     unsafe fn current_chunk(&self) -> *mut Chunk {
         &mut (*self.current_compiler).function.value_mut().chunk
     }
@@ -233,7 +226,7 @@ impl<'source> Parser<'source> {
 
         if (*compiler).ty != FunctionType::Script {
             (*self.current_compiler).function.value_mut().name =
-                Some(copy_string(self.previous.lexeme.as_bytes()));
+                Some(copy_string(self.previous.lexeme.as_bytes(), self.interner));
         }
 
         let local =
@@ -293,11 +286,12 @@ impl<'source> Parser<'source> {
     }
 
     pub unsafe fn mark_compiler_roots(&mut self) {
-        let mut compiler = self.current_compiler;
-        while compiler != ptr::null_mut() {
-            mark_object((*compiler).function);
-            compiler = (*compiler).enclosing;
-        }
+        todo!("mark_compiler_roots");
+        // let mut compiler = self.current_compiler;
+        // while compiler != ptr::null_mut() {
+        //     mark_object((*compiler).function);
+        //     compiler = (*compiler).enclosing;
+        // }
     }
 
     unsafe fn parse_precedence(&mut self, precedence: Precedence) {
@@ -323,7 +317,7 @@ impl<'source> Parser<'source> {
     }
 
     unsafe fn identifier_constant(&mut self, name: &Token) -> u8 {
-        self.make_constant(copy_string(name.lexeme.as_bytes()).into())
+        self.make_constant(copy_string(name.lexeme.as_bytes(), self.interner).into())
     }
 
     unsafe fn resolve_local(&mut self, compiler: *mut Compiler, name: &Token) -> i32 {
@@ -783,8 +777,6 @@ pub unsafe fn compile(source: &str) -> Option<Ref<ObjFunction>> {
         scanner: &mut scanner,
     };
 
-    gc_track_parser(mem::transmute(&mut parser));
-
     let mut compiler: Compiler =
         parser.create_a_compiler_with_fields_and_stuff(FunctionType::Script);
     parser.init_compiler(&mut compiler);
@@ -801,8 +793,6 @@ pub unsafe fn compile(source: &str) -> Option<Ref<ObjFunction>> {
     } else {
         Some(function)
     };
-
-    gc_untrack_parser(mem::transmute(&mut parser));
 
     result
 }
@@ -886,7 +876,7 @@ unsafe fn or(parser: &mut Parser, _can_assign: bool) {
 unsafe fn string(parser: &mut Parser, _can_assign: bool) {
     let lexeme_len = parser.previous.lexeme.len();
     let contents_slice = &parser.previous.lexeme.as_bytes()[1..lexeme_len - 1];
-    parser.emit_constant(copy_string(contents_slice).into());
+    parser.emit_constant(copy_string(contents_slice, parser.interner).into());
 }
 
 unsafe fn list(parser: &mut Parser, _can_assign: bool) {

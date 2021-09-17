@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::{
-    memory::{self, mark_object, mark_value, Ref},
+    memory::{self, Ref},
     object::ObjString,
     value::Value,
 };
@@ -144,6 +144,9 @@ pub struct Entry {
 impl Entry {
     pub fn key(&self) -> Option<Ref<ObjString>> {
         self.key
+    }
+    pub fn value(&self) -> Value {
+        self.value
     }
 }
 
@@ -287,17 +290,6 @@ impl Table {
         }
     }
 
-    pub fn mark_table(&mut self) {
-        for i in 0..self.capacity {
-            unsafe {
-                let entry = self.entries.offset(i as isize);
-                if let Some(key) = (*entry).key {
-                    mark_object(key);
-                }
-                mark_value((*entry).value);
-            }
-        }
-    }
 
     // TODO: impl Drop
     pub fn free(&mut self) {

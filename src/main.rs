@@ -1,6 +1,5 @@
 #![feature(alloc_layout_extra)]
 
-use memory::gc_track_vm;
 use std::{env, fs, process};
 use vm::{InterpretResult, VM};
 
@@ -53,8 +52,6 @@ unsafe fn run_file(vm: &mut VM, path: &str) {
 fn main() {
     unsafe {
         let mut vm = VM::new();
-        gc_track_vm(&mut vm);
-        vm.init();
 
         let args = env::args().collect::<Vec<_>>();
         if args.len() == 1 {
